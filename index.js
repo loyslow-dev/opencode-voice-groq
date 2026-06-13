@@ -1,0 +1,819 @@
+import { MODELS, DEFAULT_SETTINGS, PLUGIN_ID, formatSize, getCacheDir, getModel, getModelPath, isModelDownloaded, isModelFilePresent } from "./lib/models.js";
+import { downloadModel } from "./lib/download.js";
+import { VoiceRuntime, commandExists, listMicrophones, resolveCommand } from "./lib/engine.js";
+import { getEngineStatus, importManagedEngine, installManagedEngine, probeEngine, removeManagedEngine } from "./lib/engines.js";
+
+const KV = {
+  hotkey: "voice.hotkey",
+  toggleHotkey: "voice.toggleHotkey",
+  submitHotkey: "voice.submitHotkey",
+  model: "voice.model",
+  language: "voice.language",
+  mic: "voice.mic",
+  autoSubmit: "voice.autoSubmit",
+  downloadDir: "voice.downloadDir",
+  onboardingDone: "voice.onboardingDone",
+  setupSkipped: "voice.setupSkipped",
+};
+
+function readSettings(kv) {
+  const settings = { ...DEFAULT_SETTINGS };
+  for (const [name, key] of Object.entries(KV)) settings[name] = kv.get(key, settings[name]);
+
+  if (!getModel(settings.model)?.implemented) settings.model = DEFAULT_SETTINGS.model;
+  settings.hotkey = String(settings.hotkey || "").trim();
+  settings.toggleHotkey = String(settings.toggleHotkey || "").trim();
+  settings.submitHotkey = String(settings.submitHotkey || "").trim();
+  settings.language = String(settings.language || "auto").trim() || "auto";
+  settings.mic = String(settings.mic || "").trim();
+  settings.downloadDir = String(settings.downloadDir || "").trim();
+  settings.autoSubmit = Boolean(settings.autoSubmit);
+  settings.onboardingDone = Boolean(settings.onboardingDone);
+  settings.setupSkipped = Boolean(settings.setupSkipped);
+  return settings;
+}
+
+function writeSetting(kv, name, value) {
+  kv.set(KV[name], value);
+}
+
+function migrateSettings(kv) {
+  // Early builds defaulted the hold-to-talk key to space, but terminal release
+  // events are too inconsistent. Keep ctrl+r as the reliable toggle key.
+  const holdHotkey = kv.get(KV.hotkey, undefined);
+  if (holdHotkey === "space" || holdHotkey === "ctrl+r") kv.set(KV.hotkey, DEFAULT_SETTINGS.hotkey);
+  if (!kv.get(KV.toggleHotkey, undefined)) kv.set(KV.toggleHotkey, DEFAULT_SETTINGS.toggleHotkey);
+}
+
+function toast(api, message, variant = "info") {
+  api.ui.toast({ title: "Voice", message, variant });
+}
+
+function setDialog(ctx, size, render) {
+  ctx.api.ui.dialog.setSize(size);
+  ctx.api.ui.dialog.replace(render);
+}
+
+function formatBytes(value) {
+  if (!value || value < 0) return "0 MB";
+  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  return `${Math.max(1, Math.round(value / 1024 / 1024))} MB`;
+}
+
+function formatRate(bytesPerSecond) {
+  if (!bytesPerSecond || bytesPerSecond < 1) return "warming up";
+  if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
+  return `${Math.max(1, Math.round(bytesPerSecond / 1024))} KB/s`;
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 1) return "calculating";
+  const total = Math.ceil(seconds);
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  if (!minutes) return `${rest}s`;
+  return `${minutes}m ${String(rest).padStart(2, "0")}s`;
+}
+
+function progressBar(percent) {
+  const total = 34;
+  const filled = Math.max(0, Math.min(total, Math.round((percent / 100) * total)));
+  return `${"█".repeat(filled)}${"░".repeat(total - filled)}`;
+}
+
+function progressLine(percent) {
+  return `${progressBar(percent)}  ${String(Math.round(percent)).padStart(3, " ")}%`;
+}
+
+function renderDownloadStatus(ctx, model, progress = {}) {
+  const percent = Math.max(0, Math.min(100, progress.percent || 0));
+  const state = progress.state === "verifying" ? "Verifying checksum" : progress.state === "done" ? "Ready" : "Downloading model";
+  const downloaded = progress.downloaded || 0;
+  const total = progress.total || (model.sizeMB ? model.sizeMB * 1024 * 1024 : 0);
+  const remaining = total && progress.speedBps ? (total - downloaded) / progress.speedBps : Number.NaN;
+  const attempt = progress.attempts > 1 ? `${progress.attempt} of ${progress.attempts}` : "single pass";
+
+  setDialog(ctx, "xlarge", () =>
+    ctx.api.ui.DialogAlert({
+      title: "Downloading voice model",
+      message: [
+        model.name,
+        "",
+        state,
+        progressLine(percent),
+        "",
+        `${formatBytes(downloaded)} of ${formatBytes(total)}`,
+        `${formatRate(progress.speedBps)} · ETA ${formatDuration(remaining)}`,
+        `Attempt ${attempt}`,
+        progress.state === "verifying" ? "Verifying SHA256 before activating the model." : "Interrupted downloads resume automatically.",
+      ].join("\n"),
+    }),
+  );
+}
+
+function renderEngineInstallStatus(ctx, progress = {}) {
+  const percent = Math.max(0, Math.min(100, progress.percent || 0));
+  const state = {
+    registry: "Loading engine registry",
+    downloading: "Downloading whisper.cpp engine",
+    verifying: "Verifying engine archive",
+    decompressing: "Unpacking engine",
+    "verifying-binary": "Verifying engine binary",
+    probing: "Checking whisper-cli",
+    done: "Native engine ready",
+  }[progress.state] || "Preparing native engine";
+  const attempt = progress.attempts > 1 ? `${progress.attempt} of ${progress.attempts}` : "single pass";
+
+  setDialog(ctx, "xlarge", () =>
+    ctx.api.ui.DialogAlert({
+      title: "Installing voice engine",
+      message: [
+        "whisper.cpp",
+        "",
+        state,
+        progressLine(percent),
+        "",
+        progress.total ? `${formatBytes(progress.downloaded || 0)} of ${formatBytes(progress.total)}` : "Fetching release metadata",
+        `Attempt ${attempt}`,
+        "This is downloaded once into the managed opencode-voice cache.",
+      ].join("\n"),
+    }),
+  );
+}
+
+function modelStatus(model, options, settings) {
+  if (!model.implemented) return "planned";
+  if (isModelFilePresent(model, options, settings) && !isModelDownloaded(model, options, settings)) return "needs verification";
+  return isModelDownloaded(model, options, settings) ? "downloaded" : "not downloaded";
+}
+
+function modelOptions(options, settings) {
+  return MODELS.map((model) => ({
+    title: `${model.implemented && isModelDownloaded(model, options, settings) ? "[downloaded]" : model.implemented ? "[download]" : "[planned]"} ${model.name} - ${formatSize(model)}`,
+    value: model.id,
+    category: model.implemented ? "Available now" : "Planned sidecar models",
+    disabled: !model.implemented,
+    truncateTitle: false,
+    details: [`${model.engine} - ${model.languages} - ${modelStatus(model, options, settings)}`, model.description],
+  }));
+}
+
+async function ensureDownloaded(ctx, model, settings) {
+  if (isModelDownloaded(model, ctx.options, settings)) return true;
+
+  const startedAt = Date.now();
+  let lastRender = 0;
+  let speedBps = 0;
+  renderDownloadStatus(ctx, model, { state: "starting", downloaded: 0, total: model.sizeMB ? model.sizeMB * 1024 * 1024 : 0, percent: 0, attempt: 1, attempts: 3, speedBps });
+
+  toast(ctx.api, `Downloading ${model.name}...`);
+  await downloadModel(model, ctx.options, settings, {
+    retries: 3,
+    onProgress: (progress) => {
+      const now = Date.now();
+      const elapsed = Math.max(1, (now - startedAt) / 1000);
+      speedBps = progress.downloaded ? progress.downloaded / elapsed : speedBps;
+      if (progress.state !== "done" && progress.state !== "verifying" && now - lastRender < 350) return;
+      lastRender = now;
+      renderDownloadStatus(ctx, model, { ...progress, speedBps });
+    },
+    onRetry: ({ error, nextAttempt, attempts }) => {
+      renderDownloadStatus(ctx, model, {
+        state: "downloading",
+        downloaded: 0,
+        total: model.sizeMB ? model.sizeMB * 1024 * 1024 : 0,
+        percent: 0,
+        attempt: nextAttempt,
+        attempts,
+        speedBps: 0,
+      });
+      toast(ctx.api, `Download retry ${nextAttempt}/${attempts}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+    },
+  });
+  toast(ctx.api, `${model.name} downloaded`, "success");
+  return true;
+}
+
+async function ensureEngineReady(ctx, settings) {
+  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir };
+  const current = getEngineStatus("whisper.cpp", ctx.options, settings);
+  if (current.resolvedBinary) {
+    const probe = await probeEngine("whisper.cpp", current.resolvedBinary);
+    if (probe.ok) return true;
+  }
+
+  renderEngineInstallStatus(ctx, { state: "registry", downloaded: 0, total: 0, percent: 0, attempt: 1, attempts: 3 });
+  toast(ctx.api, "Installing local voice engine...");
+  await installManagedEngine("whisper.cpp", commandOptions, settings, {
+    retries: 3,
+    onProgress: (progress) => renderEngineInstallStatus(ctx, progress),
+    onRetry: ({ error, nextAttempt, attempts }) => {
+      renderEngineInstallStatus(ctx, { state: "downloading", downloaded: 0, total: 0, percent: 0, attempt: nextAttempt, attempts });
+      toast(ctx.api, `Engine install retry ${nextAttempt}/${attempts}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+    },
+  });
+  toast(ctx.api, "Voice engine installed", "success");
+  return true;
+}
+
+function showModelPicker(ctx, firstRun = false) {
+  const settings = readSettings(ctx.api.kv);
+  setDialog(ctx, "large", () =>
+    ctx.api.ui.DialogSelect({
+      title: firstRun ? "Set up voice input: choose a local model" : "Voice model",
+      placeholder: "Search voice models...",
+      current: settings.model,
+      options: [
+        ...modelOptions(ctx.options, settings),
+        ...(firstRun
+          ? [
+              {
+                title: "Skip setup for now",
+                value: "__skip",
+                category: "Setup",
+                description: "You can open this again with /voice-settings.",
+              },
+            ]
+          : []),
+      ],
+      onSelect: async (option) => {
+        if (option.value === "__skip") {
+          writeSetting(ctx.api.kv, "onboardingDone", true);
+          writeSetting(ctx.api.kv, "setupSkipped", true);
+          ctx.api.ui.dialog.clear();
+          toast(ctx.api, "Voice setup skipped. Use /voice-settings when ready.");
+          return;
+        }
+
+        const model = getModel(option.value);
+        if (!model?.implemented) return;
+
+        const nextSettings = { ...readSettings(ctx.api.kv), model: model.id };
+        writeSetting(ctx.api.kv, "model", model.id);
+        writeSetting(ctx.api.kv, "onboardingDone", true);
+        writeSetting(ctx.api.kv, "setupSkipped", false);
+
+        try {
+          await ensureEngineReady(ctx, nextSettings);
+          await ensureDownloaded(ctx, model, nextSettings);
+          ctx.api.ui.dialog.clear();
+        } catch (error) {
+          showError(ctx, "Voice setup failed", error);
+        }
+      },
+    }),
+  );
+}
+
+function shouldShowStartupModelPicker(ctx) {
+  const settings = readSettings(ctx.api.kv);
+  const model = getModel(settings.model);
+  return !settings.onboardingDone || (!settings.setupSkipped && !isModelDownloaded(model, ctx.options, settings));
+}
+
+function showPrompt(ctx, input) {
+  setDialog(ctx, "medium", () =>
+    ctx.api.ui.DialogPrompt({
+      title: input.title,
+      placeholder: input.placeholder,
+      value: input.value,
+      onConfirm: (value) => {
+        input.onConfirm(value);
+      },
+      onCancel: () => showSettings(ctx),
+    }),
+  );
+}
+
+function showLanguagePicker(ctx) {
+  const settings = readSettings(ctx.api.kv);
+  const options = [
+    { title: "Auto detect", value: "auto", description: "Let Whisper detect the language." },
+    { title: "Russian", value: "ru" },
+    { title: "English", value: "en" },
+    { title: "German", value: "de" },
+    { title: "Spanish", value: "es" },
+    { title: "French", value: "fr" },
+    { title: "Custom code", value: "__custom", description: "Enter a Whisper language code manually." },
+  ];
+
+  setDialog(ctx, "medium", () =>
+    ctx.api.ui.DialogSelect({
+      title: "Voice language",
+      current: settings.language,
+      options,
+      onSelect: (option) => {
+        if (option.value === "__custom") {
+          showPrompt(ctx, {
+            title: "Custom language code",
+            placeholder: "ru, en, de, ...",
+            value: settings.language === "auto" ? "" : settings.language,
+            onConfirm: (value) => {
+              writeSetting(ctx.api.kv, "language", value.trim() || "auto");
+              showSettings(ctx);
+            },
+          });
+          return;
+        }
+
+        writeSetting(ctx.api.kv, "language", option.value);
+        showSettings(ctx);
+      },
+    }),
+  );
+}
+
+function showMicrophonePicker(ctx) {
+  const settings = readSettings(ctx.api.kv);
+  const devices = listMicrophones();
+  setDialog(ctx, "large", () =>
+    ctx.api.ui.DialogSelect({
+      title: "Voice microphone",
+      current: settings.mic || "",
+      options: [
+        { title: "System default", value: "", description: "Use the default input device." },
+        ...devices.map((device) => ({ title: device, value: device })),
+        { title: "Custom device", value: "__custom", description: "Enter ffmpeg/arecord device manually." },
+      ],
+      onSelect: (option) => {
+        if (option.value === "__custom") {
+          showPrompt(ctx, {
+            title: "Custom microphone device",
+            placeholder: "default, hw:0,0, pulse, :0, ...",
+            value: settings.mic,
+            onConfirm: (value) => {
+              writeSetting(ctx.api.kv, "mic", value.trim());
+              showSettings(ctx);
+            },
+          });
+          return;
+        }
+
+        writeSetting(ctx.api.kv, "mic", option.value);
+        showSettings(ctx);
+      },
+    }),
+  );
+}
+
+function showDiagnostics(ctx) {
+  const settings = readSettings(ctx.api.kv);
+  const model = getModel(settings.model);
+  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir };
+  const whisperCli = resolveCommand("whisper-cli", commandOptions);
+  const engine = getEngineStatus("whisper.cpp", ctx.options, settings);
+  const lines = [
+    `Platform: ${process.platform}-${process.arch}`,
+    `Recorder: ffmpeg=${commandExists("ffmpeg") ? "yes" : "no"}, arecord=${commandExists("arecord") ? "yes" : "no"}, sox=${commandExists("sox") ? "yes" : "no"}`,
+    `Engine: ${engine.id}`,
+    `Engine source: ${engine.source}`,
+    `whisper-cli: ${whisperCli || "missing"}`,
+    `Managed engine dir: ${engine.managedDir}`,
+    `Managed installed: ${engine.managedInstalled ? "yes" : "no"}`,
+    `Managed version: ${engine.manifest?.version || "missing"}`,
+    `Active model: ${model.name}`,
+    `Model downloaded: ${isModelDownloaded(model, ctx.options, settings) ? "yes" : "no"}`,
+    `Model path: ${getModelPath(model, ctx.options, settings)}`,
+    `Cache dir: ${getCacheDir(ctx.options, settings)}`,
+  ];
+
+  setDialog(ctx, "medium", () =>
+    ctx.api.ui.DialogAlert({
+      title: "Voice diagnostics",
+      message: lines.join("\n"),
+      onConfirm: () => showSettings(ctx),
+    }),
+  );
+}
+
+function showEngineManager(ctx) {
+  const settings = readSettings(ctx.api.kv);
+  const status = getEngineStatus("whisper.cpp", ctx.options, settings);
+  const canImport = Boolean(status.resolvedBinary && status.source !== "managed");
+  const options = [
+    {
+      title: "Use detected whisper-cli as managed engine",
+      value: "import",
+      description: canImport ? status.resolvedBinary : "No external whisper-cli detected",
+      disabled: !canImport,
+    },
+    {
+      title: "Install managed whisper.cpp",
+      value: "install",
+      description: "Download the matching native engine from GitHub Releases.",
+    },
+    {
+      title: "Remove managed engine",
+      value: "remove",
+      description: status.managedInstalled ? status.managedBinary : "No managed engine installed",
+      disabled: !status.managedInstalled,
+    },
+    { title: "Diagnostics", value: "diagnostics", description: "Show recorder, model, and engine paths." },
+    { title: "Back", value: "back" },
+  ];
+
+  setDialog(ctx, "large", () =>
+    ctx.api.ui.DialogSelect({
+      title: "Native engine",
+      options,
+      footer: [
+        `Source: ${status.source}`,
+        `Resolved: ${status.resolvedBinary || "missing"}`,
+        `Managed: ${status.managedBinary}`,
+      ].join("\n"),
+      onSelect: async (option) => {
+        if (option.value === "back") showSettings(ctx);
+        if (option.value === "diagnostics") showDiagnostics(ctx);
+        if (option.value === "import") {
+          try {
+            const result = await importManagedEngine("whisper.cpp", status.resolvedBinary, ctx.options, settings);
+            toast(ctx.api, `Managed engine imported: ${result.managedBinary}`, "success");
+            showEngineManager(ctx);
+          } catch (error) {
+            showError(ctx, "Engine import failed", error);
+          }
+        }
+        if (option.value === "install") {
+          try {
+            await ensureEngineReady(ctx, settings);
+            showEngineManager(ctx);
+          } catch (error) {
+            showError(ctx, "Engine install failed", error);
+          }
+        }
+        if (option.value === "remove") {
+          try {
+            await removeManagedEngine("whisper.cpp", ctx.options, settings);
+            toast(ctx.api, "Managed engine removed");
+            showEngineManager(ctx);
+          } catch (error) {
+            showError(ctx, "Engine remove failed", error);
+          }
+        }
+      },
+    }),
+  );
+}
+
+function showError(ctx, title, error) {
+  setDialog(ctx, "medium", () =>
+    ctx.api.ui.DialogAlert({
+      title,
+      message: error instanceof Error ? error.message : String(error),
+      onConfirm: () => showSettings(ctx),
+    }),
+  );
+}
+
+async function downloadActiveModel(ctx) {
+  const settings = readSettings(ctx.api.kv);
+  const model = getModel(settings.model);
+  try {
+    await ensureEngineReady(ctx, settings);
+    await ensureDownloaded(ctx, model, settings);
+    showSettings(ctx);
+  } catch (error) {
+    showError(ctx, "Model download failed", error);
+  }
+}
+
+function showSettings(ctx) {
+  const settings = readSettings(ctx.api.kv);
+  const model = getModel(settings.model);
+  const downloaded = isModelDownloaded(model, ctx.options, settings);
+
+  setDialog(ctx, "large", () =>
+    ctx.api.ui.DialogSelect({
+      title: "Voice settings",
+      options: [
+        {
+          title: "Model",
+          value: "model",
+          description: `${model.name} · ${downloaded ? "downloaded" : "not downloaded"}`,
+        },
+        {
+          title: downloaded ? "Re-download active model" : "Download active model",
+          value: "download",
+          description: `${model.name} · ${formatSize(model)}`,
+        },
+        {
+          title: "Hold hotkey",
+          value: "hotkey",
+          description: settings.hotkey ? `hold ${settings.hotkey}` : "disabled",
+        },
+        {
+          title: "Toggle hotkey",
+          value: "toggleHotkey",
+          description: settings.toggleHotkey || "disabled",
+        },
+        {
+          title: "Submit hotkey",
+          value: "submitHotkey",
+          description: settings.submitHotkey || "disabled",
+        },
+        {
+          title: "Microphone",
+          value: "mic",
+          description: settings.mic || "system default",
+        },
+        {
+          title: "Language",
+          value: "language",
+          description: settings.language,
+        },
+        {
+          title: "Auto-submit after /voice",
+          value: "autoSubmit",
+          description: settings.autoSubmit ? "enabled" : "disabled",
+        },
+        {
+          title: "Download directory",
+          value: "downloadDir",
+          description: settings.downloadDir || getCacheDir(ctx.options, settings),
+        },
+        {
+          title: "Native engine",
+          value: "engine",
+          description: `${getEngineStatus("whisper.cpp", ctx.options, settings).source} · whisper.cpp`,
+        },
+        {
+          title: "Diagnostics",
+          value: "diagnostics",
+          description: "Check recorder, whisper-cli, and model paths.",
+        },
+        {
+          title: "Show first-run setup again",
+          value: "firstRun",
+          description: "Open the initial model picker.",
+        },
+      ],
+      onSelect: (option) => {
+        if (option.value === "model") showModelPicker(ctx, false);
+        if (option.value === "download") downloadActiveModel(ctx);
+        if (option.value === "hotkey") {
+          showPrompt(ctx, {
+            title: "Hold hotkey",
+            placeholder: "empty to disable",
+            value: settings.hotkey,
+            onConfirm: (value) => {
+              writeSetting(ctx.api.kv, "hotkey", value.trim());
+              ctx.registerCommands();
+              showSettings(ctx);
+            },
+          });
+        }
+        if (option.value === "toggleHotkey") {
+          showPrompt(ctx, {
+            title: "Toggle hotkey",
+            placeholder: "ctrl+r",
+            value: settings.toggleHotkey,
+            onConfirm: (value) => {
+              writeSetting(ctx.api.kv, "toggleHotkey", value.trim());
+              ctx.registerCommands();
+              showSettings(ctx);
+            },
+          });
+        }
+        if (option.value === "submitHotkey") {
+          showPrompt(ctx, {
+            title: "Submit hotkey",
+            placeholder: "leader r or empty to disable",
+            value: settings.submitHotkey,
+            onConfirm: (value) => {
+              writeSetting(ctx.api.kv, "submitHotkey", value.trim());
+              ctx.registerCommands();
+              showSettings(ctx);
+            },
+          });
+        }
+        if (option.value === "mic") showMicrophonePicker(ctx);
+        if (option.value === "language") showLanguagePicker(ctx);
+        if (option.value === "autoSubmit") {
+          writeSetting(ctx.api.kv, "autoSubmit", !settings.autoSubmit);
+          showSettings(ctx);
+        }
+        if (option.value === "downloadDir") {
+          showPrompt(ctx, {
+            title: "Download directory",
+            placeholder: "~/.cache/opencode-voice",
+            value: settings.downloadDir,
+            onConfirm: (value) => {
+              writeSetting(ctx.api.kv, "downloadDir", value.trim());
+              showSettings(ctx);
+            },
+          });
+        }
+        if (option.value === "engine") showEngineManager(ctx);
+        if (option.value === "diagnostics") showDiagnostics(ctx);
+        if (option.value === "firstRun") showModelPicker(ctx, true);
+      },
+    }),
+  );
+}
+
+async function appendTranscription(ctx, text, submit) {
+  const next = text.endsWith(" ") ? text : `${text} `;
+  await ctx.api.client.tui.appendPrompt({ text: next });
+  if (submit) await ctx.api.client.tui.submitPrompt();
+}
+
+async function stopAndTranscribe(ctx, submit) {
+  if (ctx.runtime.isTranscribing()) {
+    toast(ctx.api, "Transcription is already running", "warning");
+    return;
+  }
+
+  try {
+    const settings = readSettings(ctx.api.kv);
+    const model = getModel(settings.model);
+    const audioFile = await ctx.runtime.stop();
+    if (!audioFile) return;
+
+    toast(ctx.api, "Transcribing...");
+    const text = await ctx.runtime.transcribe(audioFile, model, settings);
+    await appendTranscription(ctx, text, submit || settings.autoSubmit);
+    toast(ctx.api, submit || settings.autoSubmit ? "Transcribed and submitted" : "Transcribed", "success");
+  } catch (error) {
+    toast(ctx.api, error instanceof Error ? error.message : String(error), "error");
+  }
+}
+
+async function startVoice(ctx, submit = false, hold = false) {
+  if (ctx.runtime.isTranscribing()) {
+    toast(ctx.api, "Transcription is already running", "warning");
+    return;
+  }
+
+  if (ctx.runtime.isRecording()) return;
+
+  const settings = readSettings(ctx.api.kv);
+  const model = getModel(settings.model);
+  if (!isModelDownloaded(model, ctx.options, settings)) {
+    try {
+      await ensureEngineReady(ctx, settings);
+      await ensureDownloaded(ctx, model, settings);
+      ctx.api.ui.dialog.clear();
+    } catch (error) {
+      showError(ctx, "Voice setup failed", error);
+      return;
+    }
+  }
+
+  try {
+    await ensureEngineReady(ctx, settings);
+  } catch (error) {
+    showError(ctx, "Engine install failed", error);
+    return;
+  }
+
+  try {
+    ctx.runtime.pendingSubmit = submit || settings.autoSubmit;
+    await ctx.runtime.start(settings);
+    toast(ctx.api, hold ? `Recording. Release ${settings.hotkey || "the hotkey"} to stop.` : submit ? "Recording for submit. Run /voice-submit again to stop." : "Recording. Run /voice again to stop.");
+  } catch (error) {
+    toast(ctx.api, error instanceof Error ? error.message : String(error), "error");
+  }
+}
+
+async function finishVoice(ctx, submit = false) {
+  if (!ctx.runtime.isRecording()) return;
+  await stopAndTranscribe(ctx, submit || ctx.runtime.pendingSubmit);
+  ctx.runtime.pendingSubmit = false;
+}
+
+async function toggleVoice(ctx, submit = false) {
+  if (ctx.runtime.isTranscribing()) {
+    toast(ctx.api, "Transcription is already running", "warning");
+    return;
+  }
+
+  if (ctx.runtime.isRecording()) {
+    await finishVoice(ctx, submit);
+    return;
+  }
+
+  await startVoice(ctx, submit, false);
+}
+
+function stopVoice(ctx) {
+  ctx.runtime.cancel();
+  toast(ctx.api, "Voice recording cancelled");
+}
+
+function buildBindings(settings) {
+  const bindings = [];
+  const holdHotkey = settings.hotkey.toLowerCase();
+  const toggleHotkey = settings.toggleHotkey.toLowerCase();
+
+  if (settings.hotkey) {
+    bindings.push(
+      { key: settings.hotkey, event: "press", preventDefault: true, cmd: "voice.hold.start", desc: "Hold to record voice" },
+      { key: settings.hotkey, event: "release", preventDefault: true, cmd: "voice.hold.finish", desc: "Release to transcribe voice" },
+    );
+  }
+
+  if (settings.toggleHotkey && toggleHotkey !== holdHotkey) {
+    bindings.push({ key: settings.toggleHotkey, event: "press", preventDefault: true, cmd: "voice.record", desc: "Toggle voice recording" });
+  }
+
+  if (settings.submitHotkey) {
+    bindings.push({ key: settings.submitHotkey, event: "press", preventDefault: true, cmd: "voice.submit", desc: "Voice input and submit" });
+  }
+
+  return bindings;
+}
+
+function buildCommands(ctx) {
+  return [
+    {
+      name: "voice.hold.start",
+      title: "Voice: hold start",
+      desc: "Start hold-to-talk recording.",
+      category: "Voice",
+      namespace: "palette",
+      hidden: true,
+      run: () => startVoice(ctx, false, true),
+    },
+    {
+      name: "voice.hold.finish",
+      title: "Voice: hold finish",
+      desc: "Stop hold-to-record and transcribe.",
+      category: "Voice",
+      namespace: "palette",
+      hidden: true,
+      run: () => finishVoice(ctx, false),
+    },
+    {
+      name: "voice.record",
+      title: "Voice: record",
+      desc: "Toggle local voice recording and append transcription to the prompt.",
+      category: "Voice",
+      namespace: "palette",
+      slashName: "voice",
+      slashAliases: ["voice-record"],
+      run: () => toggleVoice(ctx, false),
+    },
+    {
+      name: "voice.submit",
+      title: "Voice: submit",
+      desc: "Toggle local voice recording and submit after transcription.",
+      category: "Voice",
+      namespace: "palette",
+      slashName: "voice-submit",
+      run: () => toggleVoice(ctx, true),
+    },
+    {
+      name: "voice.stop",
+      title: "Voice: stop",
+      desc: "Cancel active voice recording or transcription.",
+      category: "Voice",
+      namespace: "palette",
+      slashName: "voice-stop",
+      run: () => stopVoice(ctx),
+    },
+    {
+      name: "voice.settings",
+      title: "Voice: settings",
+      desc: "Open local voice input settings.",
+      category: "Voice",
+      namespace: "palette",
+      slashName: "voice-settings",
+      run: () => showSettings(ctx),
+    },
+  ];
+}
+
+const plugin = {
+  id: PLUGIN_ID,
+  tui: async (api, options = {}) => {
+    const runtime = new VoiceRuntime(options || {});
+    const ctx = {
+      api,
+      options: options || {},
+      runtime,
+      disposeCommands: undefined,
+      registerCommands() {
+        if (ctx.disposeCommands) ctx.disposeCommands();
+        const settings = readSettings(api.kv);
+        ctx.disposeCommands = api.keymap.registerLayer({
+          priority: 100,
+          commands: buildCommands(ctx),
+          bindings: buildBindings(settings),
+        });
+      },
+    };
+
+    migrateSettings(api.kv);
+    ctx.registerCommands();
+    api.lifecycle.onDispose(() => {
+      if (ctx.disposeCommands) ctx.disposeCommands();
+      runtime.cancel();
+    });
+
+    setTimeout(() => {
+      if (shouldShowStartupModelPicker(ctx)) showModelPicker(ctx, true);
+    }, 250);
+  },
+};
+
+export default plugin;

@@ -1,0 +1,109 @@
+name: Engine Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub release tag for engine assets
+        required: true
+        default: engine-whispercpp-v1
+      whisper_cpp_ref:
+        description: whisper.cpp tag or commit
+        required: true
+        default: v1.8.2
+
+permissions:
+  contents: write
+
+env:
+  ENGINE_RELEASE_TAG: ${{ inputs.release_tag }}
+  WHISPER_CPP_REF: ${{ inputs.whisper_cpp_ref }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+          - os: macos-13
+            platform: darwin-x64
+          - os: macos-14
+            platform: darwin-arm64
+          - os: windows-latest
+            platform: win32-x64
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Linux build dependencies
+        if: startsWith(matrix.platform, 'linux')
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake git
+
+      - name: Clone whisper.cpp
+        run: git clone --depth 1 --branch "$WHISPER_CPP_REF" https://github.com/ggml-org/whisper.cpp vendor/whisper.cpp
+        shell: bash
+
+      - name: Configure whisper.cpp
+        run: cmake -S vendor/whisper.cpp -B build/whisper.cpp -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF
+        shell: bash
+
+      - name: Build whisper-cli
+        run: cmake --build build/whisper.cpp --config Release --target whisper-cli --parallel 2
+        shell: bash
+
+      - name: Package engine asset
+        run: node scripts/package-engine-asset.mjs --platform "${{ matrix.platform }}" --build build/whisper.cpp --out dist/engines --version "$WHISPER_CPP_REF"
+        shell: bash
+
+      - name: Upload engine artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.platform }}
+          path: dist/engines/*
+
+  publish:
+    name: Publish engine registry
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download engine artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/artifacts
+          merge-multiple: true
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p dist/engines
+          cp dist/artifacts/* dist/engines/
+          node scripts/build-engine-registry.mjs --dir dist/engines --repo "$GITHUB_REPOSITORY" --tag "$ENGINE_RELEASE_TAG" --version "$WHISPER_CPP_REF"
+        shell: bash
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.ENGINE_RELEASE_TAG }}
+          name: opencode-voice managed engine ${{ env.WHISPER_CPP_REF }}
+          files: |
+            dist/engines/*.gz
+            dist/engines/registry.json
