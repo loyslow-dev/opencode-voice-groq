@@ -1,9 +1,9 @@
 <p align="center">
   <a href="https://github.com/ihxnnxs/opencode-voice">
     <picture>
-      <source srcset="assets/opencode-voice-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="assets/opencode-voice-light.svg" media="(prefers-color-scheme: light)">
-      <img src="assets/opencode-voice-light.svg" alt="opencode voice logo">
+      <source srcset="../assets/opencode-voice-dark.svg" media="(prefers-color-scheme: dark)">
+      <source srcset="../assets/opencode-voice-light.svg" media="(prefers-color-scheme: light)">
+      <img src="../assets/opencode-voice-light.svg" alt="opencode voice logo">
     </picture>
   </a>
 </p>
@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> |
+  <a href="../README.md">English</a> |
   <a href="README.ru.md">Русский</a> |
   <a href="README.zh.md">简体中文</a> |
   <a href="README.es.md">Español</a>

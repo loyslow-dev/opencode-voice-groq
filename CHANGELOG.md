@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.2 - 2026-06-15
+
+### Fixed
+
+- Pinned npm package README metadata to the primary English `README.md`.
+- Moved localized READMEs under `docs/` so npm does not select them as the package README.
+
 ## 0.1.1 - 2026-06-15
 
 ### Fixed

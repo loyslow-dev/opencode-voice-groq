@@ -1,9 +1,10 @@
 {
   "name": "@hxnnxs/opencode-voice",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local voice input plugin for OpenCode",
   "type": "module",
   "license": "MIT",
+  "readmeFilename": "README.md",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ihxnnxs/opencode-voice.git"
@@ -35,7 +36,8 @@
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "PUBLISHING.md",
-    "README*.md",
+    "README.md",
+    "docs/README*.md",
     "SECURITY.md",
     "LICENSE"
   ],

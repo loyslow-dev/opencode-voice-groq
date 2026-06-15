@@ -19,9 +19,9 @@
 
 <p align="center">
   <a href="README.md">English</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.es.md">Español</a>
+  <a href="docs/README.ru.md">Русский</a> |
+  <a href="docs/README.zh.md">简体中文</a> |
+  <a href="docs/README.es.md">Español</a>
 </p>
 
 ---
