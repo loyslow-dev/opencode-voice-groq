@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.3 - 2026-06-15
+
+### Fixed
+
+- Made Windows engine and model downloads more reliable with five install attempts, longer transfer stall timeouts, safer resume validation, and retrying final file replacement.
+- Added HuggingFace fallback mirrors for Whisper models that have upstream mirror assets.
+
 ## 0.1.2 - 2026-06-15
 
 ### Fixed

@@ -164,11 +164,11 @@ async function ensureDownloaded(ctx, model, settings) {
   const startedAt = Date.now();
   let lastRender = 0;
   let speedBps = 0;
-  renderDownloadStatus(ctx, model, { state: "starting", downloaded: 0, total: model.sizeMB ? model.sizeMB * 1024 * 1024 : 0, percent: 0, attempt: 1, attempts: 3, speedBps });
+  renderDownloadStatus(ctx, model, { state: "starting", downloaded: 0, total: model.sizeMB ? model.sizeMB * 1024 * 1024 : 0, percent: 0, attempt: 1, attempts: 5, speedBps });
 
   toast(ctx.api, `Downloading ${model.name}...`);
   await downloadModel(model, ctx.options, settings, {
-    retries: 3,
+    retries: 5,
     onProgress: (progress) => {
       const now = Date.now();
       const elapsed = Math.max(1, (now - startedAt) / 1000);
@@ -202,10 +202,10 @@ async function ensureEngineReady(ctx, settings) {
     if (probe.ok) return true;
   }
 
-  renderEngineInstallStatus(ctx, { state: "registry", downloaded: 0, total: 0, percent: 0, attempt: 1, attempts: 3 });
+  renderEngineInstallStatus(ctx, { state: "registry", downloaded: 0, total: 0, percent: 0, attempt: 1, attempts: 5 });
   toast(ctx.api, "Installing local voice engine...");
   await installManagedEngine("whisper.cpp", commandOptions, settings, {
-    retries: 3,
+    retries: 5,
     onProgress: (progress) => renderEngineInstallStatus(ctx, progress),
     onRetry: ({ error, nextAttempt, attempts }) => {
       renderEngineInstallStatus(ctx, { state: "downloading", downloaded: 0, total: 0, percent: 0, attempt: nextAttempt, attempts });
