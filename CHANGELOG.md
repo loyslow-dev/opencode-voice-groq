@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.1 - 2026-06-15
+
+### Fixed
+
+- Fixed Windows managed engine install/import probing by keeping temporary `whisper-cli` binaries executable as `.exe` files.
+
+### Changed
+
+- Ignored local CodeGraph index files.
+
 ## 0.1.0 - 2026-06-12
 
 ### Added
