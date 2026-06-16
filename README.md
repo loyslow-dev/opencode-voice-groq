@@ -112,7 +112,7 @@ Planned sidecar models:
 | -------- | ------ |
 | Linux    | one-command engine/model install; recording uses `arecord`, `ffmpeg`, or `sox` |
 | macOS    | one-command engine/model install; recording uses `ffmpeg` AVFoundation until the native recorder sidecar ships |
-| Windows  | engine download path ready; recording needs the native recorder sidecar |
+| Windows  | one-command engine/model install; recording uses `ffmpeg` with DirectShow (system or bundled `ffmpeg` fallback) |
 
 ### Architecture
 
@@ -139,7 +139,7 @@ Voice input needs native audio and STT binaries. The JS plugin manages OpenCode 
 - publish managed `whisper-cli` release assets before npm release
 - Rust recorder sidecar with `cpal` and VAD
 - Parakeet, GigaAM, SenseVoice, Canary, and Moonshine model support
-- Windows recorder support
+- Windows recorder stability and UX polish
 - faster streaming-style transcription
 
 ### Development

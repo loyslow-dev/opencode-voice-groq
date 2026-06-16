@@ -1,6 +1,6 @@
 {
   "name": "@hxnnxs/opencode-voice",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Local voice input plugin for OpenCode",
   "type": "module",
   "license": "MIT",
@@ -44,6 +44,9 @@
   "scripts": {
     "check": "node --check index.js && node --check lib/models.js && node --check lib/download.js && node --check lib/engine.js && node --check lib/engines.js && node --check bin/opencode-voice.js && node --check scripts/package-engine-asset.mjs && node --check scripts/build-engine-registry.mjs",
     "prepack": "npm run check"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0"
   },
   "publishConfig": {
     "access": "public",

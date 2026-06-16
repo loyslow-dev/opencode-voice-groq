@@ -325,6 +325,7 @@ function showLanguagePicker(ctx) {
 
 function showMicrophonePicker(ctx) {
   const settings = readSettings(ctx.api.kv);
+  const placeholder = process.platform === "win32" ? "default, audio=default, \"Microphone (Name)\"" : "default, hw:0,0, pulse, :0, ...";
   const devices = listMicrophones();
   setDialog(ctx, "large", () =>
     ctx.api.ui.DialogSelect({
@@ -339,7 +340,7 @@ function showMicrophonePicker(ctx) {
         if (option.value === "__custom") {
           showPrompt(ctx, {
             title: "Custom microphone device",
-            placeholder: "default, hw:0,0, pulse, :0, ...",
+            placeholder,
             value: settings.mic,
             onConfirm: (value) => {
               writeSetting(ctx.api.kv, "mic", value.trim());

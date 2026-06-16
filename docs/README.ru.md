@@ -110,7 +110,7 @@ Hold-to-talk отключен по умолчанию, потому что termi
 | --------- | ------ |
 | Linux     | one-command engine/model install; запись использует `arecord`, `ffmpeg` или `sox` |
 | macOS     | one-command engine/model install; запись использует `ffmpeg` AVFoundation до native recorder sidecar |
-| Windows   | путь скачивания engine готов; recording ждёт native recorder sidecar |
+| Windows   | one-command engine/model install; запись через `ffmpeg` + DirectShow (через системный ffmpeg или встроенный fallback) |
 
 ### Архитектура
 
@@ -137,7 +137,7 @@ Voice input требует native audio и STT binaries. JS-плагин упр�
 - опубликовать managed `whisper-cli` release assets перед npm release
 - Rust recorder sidecar с `cpal` и VAD
 - поддержка Parakeet, GigaAM, SenseVoice, Canary и Moonshine
-- Windows recorder support
+- Улучшение устойчивости и UX Windows recorder
 - более быстрая streaming-style transcription
 
 ### Разработка

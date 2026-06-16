@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.4 - 2026-06-16
+
+### Added
+
+- Added bundled `ffmpeg` fallback for Windows recorder flow via `ffmpeg-static` so voice input no longer depends on user-installed `ffmpeg`.
+- Added Windows DirectShow microphone discovery and input handling in the recorder layer.
+
 ## 0.1.3 - 2026-06-15
 
 ### Fixed

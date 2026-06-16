@@ -110,7 +110,7 @@ ctrl+r -> 停止、转写并插入文本
 | ------- | ---- |
 | Linux   | 一条命令安装 engine/model；录音使用 `arecord`、`ffmpeg` 或 `sox` |
 | macOS   | 一条命令安装 engine/model；native recorder sidecar 发布前使用 `ffmpeg` AVFoundation |
-| Windows | engine 下载路径已准备好；录音还需要 native recorder sidecar |
+| Windows | 下载 engine/model 一条命令完成；通过 `ffmpeg` + DirectShow 录音（使用系统 ffmpeg 或内置备用） |
 
 ### 架构
 
@@ -137,7 +137,7 @@ ctrl+r -> 停止、转写并插入文本
 - npm release 前发布 managed `whisper-cli` release assets
 - 使用 `cpal` 和 VAD 的 Rust recorder sidecar
 - 支持 Parakeet、GigaAM、SenseVoice、Canary 和 Moonshine
-- Windows recorder support
+- 更完善的 Windows 录音体验和稳定性
 - 更快的 streaming-style transcription
 
 ### 开发
