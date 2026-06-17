@@ -362,10 +362,13 @@ function showDiagnostics(ctx) {
   const model = getModel(settings.model);
   const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir };
   const whisperCli = resolveCommand("whisper-cli", commandOptions);
+  const ffmpeg = resolveCommand("ffmpeg", commandOptions);
+  const arecord = resolveCommand("arecord", commandOptions);
+  const sox = resolveCommand("sox", commandOptions);
   const engine = getEngineStatus("whisper.cpp", ctx.options, settings);
   const lines = [
     `Platform: ${process.platform}-${process.arch}`,
-    `Recorder: ffmpeg=${commandExists("ffmpeg") ? "yes" : "no"}, arecord=${commandExists("arecord") ? "yes" : "no"}, sox=${commandExists("sox") ? "yes" : "no"}`,
+    `Recorder: ffmpeg=${ffmpeg ? "yes" : "no"}${ffmpeg ? ` (${ffmpeg})` : ""}, arecord=${arecord ? "yes" : "no"}, sox=${sox ? "yes" : "no"}`,
     `Engine: ${engine.id}`,
     `Engine source: ${engine.source}`,
     `whisper-cli: ${whisperCli || "missing"}`,

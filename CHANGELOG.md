@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.5 - 2026-06-17
+
+### Fixed
+
+- Recovered missing `ffmpeg-static` at runtime on Windows by installing it locally when not present, preventing `No recorder found` failures after fresh plugin installs.
+
 ## 0.1.4 - 2026-06-16
 
 ### Added
