@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.6 - 2026-06-17
+
+### Fixed
+
+- Fixed Windows recorder startup to use resolved recorder command paths (including bundled ffmpeg) directly when spawning, preventing startup failures when ffmpeg is present only by absolute path.
+
 ## 0.1.5 - 2026-06-17
 
 ### Fixed
