@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.7 - 2026-06-17
+
+### Fixed
+
+- Hardened Windows ffmpeg resolution to handle executable-resolution edge cases (extensionless bundled binary paths and local module fallback), so recorder startup can use the actual resolved binary path.
+- Improved diagnostics to print exact recorder command paths and quick per-command probe results in `opencode-voice doctor` output.
+
 ## 0.1.6 - 2026-06-17
 
 ### Fixed

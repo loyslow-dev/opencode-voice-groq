@@ -32,6 +32,34 @@ function packageName() {
   return process.env.OPENCODE_VOICE_PACKAGE || manifest.name || "opencode-voice";
 }
 
+function probeCommand(command, args = ["-version"]) {
+  if (!command) return { ok: false, message: "missing" };
+  try {
+    const result = spawnSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 2000,
+    });
+
+    if (result.error) {
+      return { ok: false, message: result.error.message };
+    }
+
+    if (typeof result.status === "number" && result.status !== 0) {
+      return {
+        ok: false,
+        message: `exit ${result.status}`,
+        stderr: (result.stderr || "").trim(),
+      };
+    }
+
+    const output = `${result.stdout || ""}${result.stderr || ""}`;
+    return { ok: true, versionLine: output.split("\n").filter(Boolean)[0] || "" };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function runtime() {
   const [engine, models, engines] = await Promise.all([import("../lib/engine.js"), import("../lib/models.js"), import("../lib/engines.js")]);
   return { ...engine, ...models, ...engines };
@@ -40,6 +68,7 @@ async function runtime() {
 async function doctor() {
   const {
     commandExists,
+    resolveCommand,
     getAudioDir,
     getCacheDir,
     getEngineStatus,
@@ -50,6 +79,9 @@ async function doctor() {
 
   const engine = getEngineStatus("whisper.cpp");
   const probe = engine.resolvedBinary ? await probeEngine("whisper.cpp", engine.resolvedBinary) : { ok: false, message: "missing binary" };
+  const ffmpeg = resolveCommand("ffmpeg");
+  const arecord = resolveCommand("arecord");
+  const sox = resolveCommand("sox");
   const payload = {
     platform: `${process.platform}-${process.arch}`,
     cacheDir: getCacheDir(),
@@ -58,9 +90,15 @@ async function doctor() {
     engine,
     probe,
     recorders: {
-      ffmpeg: commandExists("ffmpeg"),
-      arecord: commandExists("arecord"),
-      sox: commandExists("sox"),
+      ffmpeg,
+      arecord,
+      sox,
+      ffmpegPresent: commandExists("ffmpeg"),
+      arecordPresent: commandExists("arecord"),
+      soxPresent: commandExists("sox"),
+      ffmpegProbe: probeCommand(ffmpeg),
+      arecordProbe: probeCommand(arecord, ["--help"]),
+      soxProbe: probeCommand(sox, ["--help"]),
     },
     microphones: listMicrophones(),
   };
@@ -80,7 +118,7 @@ async function doctor() {
         `Managed engine dir: ${engine.managedDir}`,
         `whisper-cli: ${engine.resolvedBinary || "missing"}`,
         `Probe: ${probe.ok ? "ok" : probe.message}`,
-        `Recorders: ffmpeg=${payload.recorders.ffmpeg ? "yes" : "no"}, arecord=${payload.recorders.arecord ? "yes" : "no"}, sox=${payload.recorders.sox ? "yes" : "no"}`,
+        `Recorders: ffmpeg=${payload.recorders.ffmpegPresent ? "yes" : "no"}${payload.recorders.ffmpeg ? ` (${payload.recorders.ffmpeg})` : ""}, arecord=${payload.recorders.arecordPresent ? "yes" : "no"}${payload.recorders.arecord ? ` (${payload.recorders.arecord})` : ""}, sox=${payload.recorders.soxPresent ? "yes" : "no"}${payload.recorders.sox ? ` (${payload.recorders.sox})` : ""}`,
         `Microphones: ${payload.microphones.join(", ")}`,
       ].join("\n"),
     );
@@ -162,7 +200,13 @@ function printEngineRetry({ error, nextAttempt, attempts }) {
 
 async function installCommand() {
   const pluginArgs = args.filter((arg) => arg !== "--no-engine");
-  const result = spawnSync("opencode", ["plugin", packageName(), ...pluginArgs], { stdio: "inherit" });
+  const spawnOptions = { stdio: "inherit" };
+  if (process.platform === "win32") spawnOptions.shell = true;
+  const result = spawnSync("opencode", ["plugin", packageName(), ...pluginArgs], spawnOptions);
+  if (result.error) {
+    console.error(`Failed to run opencode: ${result.error.message}`);
+    process.exit(1);
+  }
   if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1);
 
   if (!hasFlag("--no-engine")) {
