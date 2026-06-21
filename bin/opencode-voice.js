@@ -67,21 +67,41 @@ async function runtime() {
 
 async function doctor() {
   const {
-    commandExists,
+    ensureManagedRecorder,
     resolveCommand,
     getAudioDir,
     getCacheDir,
     getEngineStatus,
     getModelsDir,
+    getRecorderStatus,
     listMicrophones,
     probeEngine,
   } = await runtime();
 
+  const json = hasFlag("--json");
+  let recorderInstall = null;
+  let recorderInstallError = "";
+  if (process.platform === "win32") {
+    try {
+      recorderInstall = await ensureManagedRecorder(
+        {},
+        {},
+        json ? {} : { onProgress: printRecorderProgress, onRetry: printRecorderRetry },
+      );
+    } catch (error) {
+      recorderInstallError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  const recorderOptions = process.platform === "win32" && recorderInstall?.resolvedBinary
+    ? { ffmpeg: recorderInstall.resolvedBinary, skipFfmpegStaticInstall: true }
+    : {};
   const engine = getEngineStatus("whisper.cpp");
   const probe = engine.resolvedBinary ? await probeEngine("whisper.cpp", engine.resolvedBinary) : { ok: false, message: "missing binary" };
-  const ffmpeg = resolveCommand("ffmpeg");
-  const arecord = resolveCommand("arecord");
-  const sox = resolveCommand("sox");
+  const recorder = getRecorderStatus(recorderOptions);
+  const ffmpeg = recorderInstall?.resolvedBinary || resolveCommand("ffmpeg", recorderOptions);
+  const arecord = resolveCommand("arecord", recorderOptions);
+  const sox = resolveCommand("sox", recorderOptions);
   const payload = {
     platform: `${process.platform}-${process.arch}`,
     cacheDir: getCacheDir(),
@@ -89,21 +109,24 @@ async function doctor() {
     recordingsDir: getAudioDir(),
     engine,
     probe,
+    recorder,
     recorders: {
       ffmpeg,
       arecord,
       sox,
-      ffmpegPresent: commandExists("ffmpeg"),
-      arecordPresent: commandExists("arecord"),
-      soxPresent: commandExists("sox"),
+      ffmpegPresent: Boolean(ffmpeg),
+      arecordPresent: Boolean(arecord),
+      soxPresent: Boolean(sox),
       ffmpegProbe: probeCommand(ffmpeg),
       arecordProbe: probeCommand(arecord, ["--help"]),
       soxProbe: probeCommand(sox, ["--help"]),
+      managedInstall: recorderInstall,
+      managedInstallError: recorderInstallError,
     },
-    microphones: listMicrophones(),
+    microphones: listMicrophones(recorderOptions),
   };
 
-  if (hasFlag("--json")) {
+  if (json) {
     console.log(JSON.stringify(payload, null, 2));
   } else {
     console.log(
@@ -118,13 +141,19 @@ async function doctor() {
         `Managed engine dir: ${engine.managedDir}`,
         `whisper-cli: ${engine.resolvedBinary || "missing"}`,
         `Probe: ${probe.ok ? "ok" : probe.message}`,
+        `Recorder source: ${recorder.source}`,
+        `Managed recorder dir: ${recorder.managedDir}`,
+        `Managed recorder installed: ${recorder.managedInstalled ? "yes" : "no"}`,
+        `Managed recorder version: ${recorder.manifest?.version || "missing"}`,
+        `Managed recorder probe: ${payload.recorders.ffmpegProbe.ok ? "ok" : payload.recorders.ffmpegProbe.message}`,
+        ...(recorderInstallError ? [`Managed recorder error: ${recorderInstallError}`] : []),
         `Recorders: ffmpeg=${payload.recorders.ffmpegPresent ? "yes" : "no"}${payload.recorders.ffmpeg ? ` (${payload.recorders.ffmpeg})` : ""}, arecord=${payload.recorders.arecordPresent ? "yes" : "no"}${payload.recorders.arecord ? ` (${payload.recorders.arecord})` : ""}, sox=${payload.recorders.soxPresent ? "yes" : "no"}${payload.recorders.sox ? ` (${payload.recorders.sox})` : ""}`,
         `Microphones: ${payload.microphones.join(", ")}`,
       ].join("\n"),
     );
   }
 
-  if (!engine.resolvedBinary || !probe.ok) process.exitCode = 1;
+  if (!engine.resolvedBinary || !probe.ok || (process.platform === "win32" && !payload.recorders.ffmpegProbe.ok)) process.exitCode = 1;
 }
 
 async function engineCommand() {
@@ -198,6 +227,21 @@ function printEngineRetry({ error, nextAttempt, attempts }) {
   console.warn(`engine retry ${nextAttempt}/${attempts}: ${error instanceof Error ? error.message : String(error)}`);
 }
 
+function printRecorderProgress(progress) {
+  const label = {
+    downloading: "download",
+    decompressing: "unpack",
+    probing: "probe",
+    done: "done",
+  }[progress.state] || progress.state || "recorder";
+  const percent = Number.isFinite(progress.percent) ? `${Math.round(progress.percent)}%` : "";
+  if (progress.state === "downloading" || progress.state === "done") console.log(`recorder ${label} ${percent}`.trim());
+}
+
+function printRecorderRetry({ error, nextAttempt, attempts }) {
+  console.warn(`recorder retry ${nextAttempt}/${attempts}: ${error instanceof Error ? error.message : String(error)}`);
+}
+
 async function installCommand() {
   const pluginArgs = args.filter((arg) => arg !== "--no-engine");
   const spawnOptions = { stdio: "inherit" };
@@ -214,6 +258,13 @@ async function installCommand() {
     console.log("Installing managed voice engine...");
     const engine = await installManagedEngine("whisper.cpp", {}, {}, { onProgress: printEngineProgress, onRetry: printEngineRetry });
     console.log(`Managed voice engine ready: ${engine.managedBinary}`);
+  }
+
+  if (process.platform === "win32") {
+    const { ensureManagedRecorder } = await runtime();
+    console.log("Installing managed Windows recorder...");
+    const recorder = await ensureManagedRecorder({}, {}, { onProgress: printRecorderProgress, onRetry: printRecorderRetry });
+    console.log(`Managed Windows recorder ready: ${recorder.managedBinary || recorder.resolvedBinary}`);
   }
 }
 

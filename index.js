@@ -1,6 +1,6 @@
 import { MODELS, DEFAULT_SETTINGS, PLUGIN_ID, formatSize, getCacheDir, getModel, getModelPath, isModelDownloaded, isModelFilePresent } from "./lib/models.js";
 import { downloadModel } from "./lib/download.js";
-import { VoiceRuntime, commandExists, listMicrophones, resolveCommand } from "./lib/engine.js";
+import { VoiceRuntime, ensureManagedRecorder, getRecorderStatus, listMicrophones, probeRecorder, resolveCommand } from "./lib/engine.js";
 import { getEngineStatus, importManagedEngine, installManagedEngine, probeEngine, removeManagedEngine } from "./lib/engines.js";
 
 const KV = {
@@ -141,6 +141,33 @@ function renderEngineInstallStatus(ctx, progress = {}) {
   );
 }
 
+function renderRecorderInstallStatus(ctx, progress = {}) {
+  const percent = Math.max(0, Math.min(100, progress.percent || 0));
+  const state = {
+    downloading: "Downloading Windows recorder",
+    decompressing: "Unpacking ffmpeg",
+    probing: "Checking ffmpeg",
+    done: "Windows recorder ready",
+  }[progress.state] || "Preparing Windows recorder";
+  const attempt = progress.attempts > 1 ? `${progress.attempt} of ${progress.attempts}` : "single pass";
+
+  setDialog(ctx, "xlarge", () =>
+    ctx.api.ui.DialogAlert({
+      title: "Installing Windows recorder",
+      message: [
+        "ffmpeg DirectShow",
+        "",
+        state,
+        progressLine(percent),
+        "",
+        progress.total ? `${formatBytes(progress.downloaded || 0)} of ${formatBytes(progress.total)}` : "Fetching recorder binary",
+        `Attempt ${attempt}`,
+        "This is downloaded once into the managed opencode-voice cache.",
+      ].join("\n"),
+    }),
+  );
+}
+
 function modelStatus(model, options, settings) {
   if (!model.implemented) return "planned";
   if (isModelFilePresent(model, options, settings) && !isModelDownloaded(model, options, settings)) return "needs verification";
@@ -213,6 +240,30 @@ async function ensureEngineReady(ctx, settings) {
     },
   });
   toast(ctx.api, "Voice engine installed", "success");
+  return true;
+}
+
+async function ensureRecorderReady(ctx, settings) {
+  if (process.platform !== "win32") return true;
+
+  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir, skipFfmpegStaticInstall: true };
+  const current = getRecorderStatus(commandOptions, settings);
+  if (current.resolvedBinary) {
+    const probe = await probeRecorder(current.resolvedBinary);
+    if (probe.ok) return true;
+  }
+
+  renderRecorderInstallStatus(ctx, { state: "downloading", downloaded: 0, total: 0, percent: 0, attempt: 1, attempts: 5 });
+  toast(ctx.api, "Installing local Windows recorder...");
+  await ensureManagedRecorder(commandOptions, settings, {
+    retries: 5,
+    onProgress: (progress) => renderRecorderInstallStatus(ctx, progress),
+    onRetry: ({ error, nextAttempt, attempts }) => {
+      renderRecorderInstallStatus(ctx, { state: "downloading", downloaded: 0, total: 0, percent: 0, attempt: nextAttempt, attempts });
+      toast(ctx.api, `Recorder install retry ${nextAttempt}/${attempts}: ${error instanceof Error ? error.message : String(error)}`, "warning");
+    },
+  });
+  toast(ctx.api, "Windows recorder installed", "success");
   return true;
 }
 
@@ -325,8 +376,9 @@ function showLanguagePicker(ctx) {
 
 function showMicrophonePicker(ctx) {
   const settings = readSettings(ctx.api.kv);
+  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir, skipFfmpegStaticInstall: true };
   const placeholder = process.platform === "win32" ? "default, audio=default, \"Microphone (Name)\"" : "default, hw:0,0, pulse, :0, ...";
-  const devices = listMicrophones();
+  const devices = listMicrophones(commandOptions);
   setDialog(ctx, "large", () =>
     ctx.api.ui.DialogSelect({
       title: "Voice microphone",
@@ -360,15 +412,20 @@ function showMicrophonePicker(ctx) {
 function showDiagnostics(ctx) {
   const settings = readSettings(ctx.api.kv);
   const model = getModel(settings.model);
-  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir };
+  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir, skipFfmpegStaticInstall: true };
   const whisperCli = resolveCommand("whisper-cli", commandOptions);
   const ffmpeg = resolveCommand("ffmpeg", commandOptions);
   const arecord = resolveCommand("arecord", commandOptions);
   const sox = resolveCommand("sox", commandOptions);
   const engine = getEngineStatus("whisper.cpp", ctx.options, settings);
+  const recorder = getRecorderStatus(commandOptions, settings);
   const lines = [
     `Platform: ${process.platform}-${process.arch}`,
     `Recorder: ffmpeg=${ffmpeg ? "yes" : "no"}${ffmpeg ? ` (${ffmpeg})` : ""}, arecord=${arecord ? "yes" : "no"}, sox=${sox ? "yes" : "no"}`,
+    `Recorder source: ${recorder.source}`,
+    `Managed recorder dir: ${recorder.managedDir}`,
+    `Managed recorder installed: ${recorder.managedInstalled ? "yes" : "no"}`,
+    `Managed recorder version: ${recorder.manifest?.version || "missing"}`,
     `Engine: ${engine.id}`,
     `Engine source: ${engine.source}`,
     `whisper-cli: ${whisperCli || "missing"}`,
@@ -665,8 +722,9 @@ async function startVoice(ctx, submit = false, hold = false) {
 
   try {
     await ensureEngineReady(ctx, settings);
+    await ensureRecorderReady(ctx, settings);
   } catch (error) {
-    showError(ctx, "Engine install failed", error);
+    showError(ctx, "Voice runtime setup failed", error);
     return;
   }
 

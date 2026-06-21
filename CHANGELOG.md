@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.8 - 2026-06-21
+
+### Fixed
+
+- Added a managed Windows recorder install: the plugin can now download, unpack, cache, and probe `ffmpeg.exe` itself before recording, so Windows voice input no longer depends on `ffmpeg-static` lifecycle scripts, npm recovery installs, or a user-installed recorder on `PATH`.
+- Extended `opencode-voice doctor` diagnostics to prepare and report the managed Windows recorder path, manifest, install error, and probe result.
+- Made managed native binary replacement retry-safe on Windows for both recorder and `whisper-cli` engine installs.
+
 ## 0.1.7 - 2026-06-17
 
 ### Fixed

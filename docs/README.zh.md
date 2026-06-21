@@ -110,7 +110,7 @@ ctrl+r -> 停止、转写并插入文本
 | ------- | ---- |
 | Linux   | 一条命令安装 engine/model；录音使用 `arecord`、`ffmpeg` 或 `sox` |
 | macOS   | 一条命令安装 engine/model；native recorder sidecar 发布前使用 `ffmpeg` AVFoundation |
-| Windows | 下载 engine/model 一条命令完成；通过 `ffmpeg` + DirectShow 录音（使用系统 ffmpeg 或内置备用） |
+| Windows | 一条命令安装 engine/model/recorder；通过 managed cached `ffmpeg.exe` + DirectShow 录音，并保留系统/内置 ffmpeg 备用 |
 
 ### 架构
 
@@ -126,7 +126,7 @@ ctrl+r -> 停止、转写并插入文本
 - `index.js` - TUI 插件入口、命令、dialogs、keymap layer
 - `lib/models.js` - 模型 registry、cache paths、default settings
 - `lib/download.js` - 可续传下载和 SHA256 校验
-- `lib/engine.js` - recorder 选择和 `whisper-cli` 转写
+- `lib/engine.js` - recorder 选择、managed Windows recorder 安装和 `whisper-cli` 转写
 - `lib/engines.js` - managed native engine 下载、状态、导入和移除
 - `bin/opencode-voice.js` - install wrapper 和 diagnostics CLI
 

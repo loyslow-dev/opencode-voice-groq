@@ -110,7 +110,7 @@ Modelos sidecar planeados:
 | ---------- | ------ |
 | Linux      | instalación engine/model en una orden; la grabación usa `arecord`, `ffmpeg` o `sox` |
 | macOS      | instalación engine/model en una orden; la grabación usa `ffmpeg` AVFoundation hasta el native recorder sidecar |
-| Windows    | instalación one-command de engine/model; grabación con `ffmpeg` + DirectShow (desde ffmpeg del sistema o fallback incluido) |
+| Windows    | instalación one-command de engine/model/recorder; grabación con DirectShow mediante `ffmpeg.exe` managed en caché, con fallback a ffmpeg del sistema/incluido |
 
 ### Arquitectura
 
@@ -126,7 +126,7 @@ Archivos:
 - `index.js` - entrada TUI, comandos, dialogs, keymap layer
 - `lib/models.js` - registry de modelos, cache paths, default settings
 - `lib/download.js` - descarga resumible y verificación SHA256
-- `lib/engine.js` - selección de recorder y transcripción con `whisper-cli`
+- `lib/engine.js` - selección de recorder, instalación managed del recorder Windows y transcripción con `whisper-cli`
 - `lib/engines.js` - descarga, estado, importación y eliminación de managed native engine
 - `bin/opencode-voice.js` - install wrapper y diagnostics CLI
 

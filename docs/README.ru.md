@@ -110,7 +110,7 @@ Hold-to-talk отключен по умолчанию, потому что termi
 | --------- | ------ |
 | Linux     | one-command engine/model install; запись использует `arecord`, `ffmpeg` или `sox` |
 | macOS     | one-command engine/model install; запись использует `ffmpeg` AVFoundation до native recorder sidecar |
-| Windows   | one-command engine/model install; запись через `ffmpeg` + DirectShow (через системный ffmpeg или встроенный fallback) |
+| Windows   | one-command engine/model/recorder install; запись через DirectShow и managed cached `ffmpeg.exe`, с fallback на системный/встроенный ffmpeg |
 
 ### Архитектура
 
@@ -126,7 +126,7 @@ Hold-to-talk отключен по умолчанию, потому что termi
 - `index.js` - TUI entrypoint, команды, dialogs, keymap layer
 - `lib/models.js` - registry моделей, cache paths, default settings
 - `lib/download.js` - resumable download и SHA256 verification
-- `lib/engine.js` - выбор recorder и transcription через `whisper-cli`
+- `lib/engine.js` - выбор recorder, managed Windows recorder install и transcription через `whisper-cli`
 - `lib/engines.js` - managed native engine download, status, import и removal
 - `bin/opencode-voice.js` - install wrapper и diagnostics CLI
 

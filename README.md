@@ -112,7 +112,7 @@ Planned sidecar models:
 | -------- | ------ |
 | Linux    | one-command engine/model install; recording uses `arecord`, `ffmpeg`, or `sox` |
 | macOS    | one-command engine/model install; recording uses `ffmpeg` AVFoundation until the native recorder sidecar ships |
-| Windows  | one-command engine/model install; recording uses `ffmpeg` with DirectShow (system or bundled `ffmpeg` fallback) |
+| Windows  | one-command engine/model/recorder install; recording uses DirectShow through a managed cached `ffmpeg.exe`, with system/bundled ffmpeg fallback |
 
 ### Architecture
 
@@ -128,7 +128,7 @@ Files:
 - `index.js` - TUI plugin entrypoint, commands, dialogs, keymap layer
 - `lib/models.js` - model registry, cache paths, default settings
 - `lib/download.js` - resumable model download and SHA256 verification
-- `lib/engine.js` - recorder selection and `whisper-cli` transcription
+- `lib/engine.js` - recorder selection, managed Windows recorder install, and `whisper-cli` transcription
 - `lib/engines.js` - managed native engine download, status, import, and removal
 - `bin/opencode-voice.js` - install wrapper and diagnostics CLI
 
