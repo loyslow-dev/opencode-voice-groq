@@ -26,6 +26,8 @@
 
 ---
 
+这是原版 `opencode-voice` 的分支。此插件无需在本地下载庞大的模型或消耗 CPU/GPU，而是使用 **Groq 的 LPU 推理引擎**。音频将即时记录、压缩为 `m4a` 格式、自动去除静音，并在毫秒级内完成转录。
+
 ### 安装
 
 通过 OpenCode 使用一条命令：
@@ -45,7 +47,7 @@ npx @loyslow/opencode-voice-groq install
 ### 致谢
 
 - OpenCode SVG 徽标改编自公共 [OpenCode 仓库](https://github.com/anomalyco/opencode)。为该插件添加了 `voice` 标记。
-- 这是 `@ihxnnxs` 创建的原始 [opencode-voice](https://github.com/ihxnnxs/opencode-voice) 项目的高度优化分支。
+- 这是 `@ihxnnxs` 创建的原始 [opencode-voice](https://github.com/ihxnnxs/opencode-voice) 项目的分支。
 
 ---
 

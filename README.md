@@ -26,6 +26,8 @@
 
 ---
 
+This is a fork of the original `opencode-voice`. Instead of downloading heavy models and processing audio locally (which consumes CPU/GPU and takes time), this plugin uses **Groq's LPU inference engine**. Audio is recorded, aggressively compressed to `m4a` (AAC) on-the-fly, stripped of silence, and transcribed in milliseconds.
+
 ### Installation
 
 One command through OpenCode:
@@ -71,10 +73,9 @@ Default hotkey:
 ```txt
 ctrl+r -> start recording
 ctrl+r -> stop, transcribe, and append
-escape -> cancel recording without sending
 ```
 
-Hold-to-talk is disabled by default because terminal release events vary by terminal. You can still configure a hold hotkey in `/voice-settings`.
+You can configure a cancel hotkey in `/voice-settings`.
 
 ### Models
 
@@ -144,7 +145,7 @@ This is an independent OpenCode plugin. It is not built by the OpenCode team and
 ### Credits
 
 - OpenCode wordmark SVG adapted from the public [OpenCode repository](https://github.com/anomalyco/opencode). The `voice` mark was added for this plugin.
-- This is a highly optimized fork of the original [opencode-voice](https://github.com/ihxnnxs/opencode-voice) project created by `@ihxnnxs`.
+- This is a fork of the original [opencode-voice](https://github.com/ihxnnxs/opencode-voice) project created by `@ihxnnxs`.
 
 ---
 

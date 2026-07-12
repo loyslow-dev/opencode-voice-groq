@@ -26,6 +26,8 @@
 
 ---
 
+Este es un fork de `opencode-voice`. En lugar de descargar modelos pesados y procesar audio localmente, este complemento usa los **LPU de Groq**. El audio se graba, se comprime agresivamente a `.m4a` sobre la marcha, se le elimina el silencio y se transcribe en milisegundos.
+
 ### Instalación
 
 Un comando a través de OpenCode:
@@ -45,7 +47,7 @@ npx @loyslow/opencode-voice-groq install
 ### Créditos
 
 - El logotipo de OpenCode SVG fue adaptado del [repositorio público de OpenCode](https://github.com/anomalyco/opencode). La marca `voice` se añadió para este plugin.
-- Este es un fork altamente optimizado del proyecto original [opencode-voice](https://github.com/ihxnnxs/opencode-voice) creado por `@ihxnnxs`.
+- Este es un fork del proyecto original [opencode-voice](https://github.com/ihxnnxs/opencode-voice) creado por `@ihxnnxs`.
 
 ---
 
