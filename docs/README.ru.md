@@ -1,174 +1,53 @@
 <p align="center">
-  <a href="https://github.com/ihxnnxs/opencode-voice">
-    <picture>
-      <source srcset="../assets/opencode-voice-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="../assets/opencode-voice-light.svg" media="(prefers-color-scheme: light)">
-      <img src="../assets/opencode-voice-light.svg" alt="opencode voice logo">
-    </picture>
-  </a>
-</p>
-<p align="center">Локальный speech-to-text для OpenCode TUI.</p>
-<p align="center">
-  <img alt="status" src="https://img.shields.io/badge/status-mvp-orange?style=flat-square" />
-  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" />
-  <img alt="opencode" src="https://img.shields.io/badge/opencode-%3E%3D1.17.4-black?style=flat-square" />
-  <img alt="stt" src="https://img.shields.io/badge/STT-local_whisper.cpp-purple?style=flat-square" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/opencode-voice-dark.svg">
+    <img alt="opencode voice groq" src="../assets/opencode-voice-light.svg">
+  </picture>
 </p>
 
-<p align="center">
-  <a href="../README.md">English</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.es.md">Español</a>
-</p>
+[English](../README.md) | [Русский](README.ru.md) | [简体中文](README.zh.md) | [Español](README.es.md)
 
----
+# opencode-voice-groq
 
-### Установка
+Сверхбыстрый облачный плагин голосового ввода для [OpenCode](https://github.com/opencode-ai/opencode), использующий API Whisper от Groq (`whisper-large-v3` и `whisper-large-v3-turbo`).
 
-Одна команда через OpenCode:
+Это сильно оптимизированный форк оригинального плагина `opencode-voice`. Вместо скачивания тяжелых моделей и обработки аудио на вашем компьютере (что требует мощного CPU/GPU и времени), этот плагин использует **LPU-процессоры Groq**. Аудио записывается, "на лету" сжимается в `m4a` (AAC), очищается от тишины и расшифровывается за миллисекунды.
 
-```bash
-opencode plugin @hxnnxs/opencode-voice
-```
+## Особенности
 
-Перезапустите OpenCode после установки. При первом запуске плагин сам скачает managed `whisper.cpp` engine и выбранную модель. Пользователь не ставит `whisper-cli` руками.
+- **Мгновенная транскрибация**: Работает на сверхбыстром API Groq.
+- **Мощное сжатие аудио**: Запись сразу в `.m4a` минимизирует сетевые задержки.
+- **Удаление тишины**: Автоматически отрезает паузы в начале и конце вашей речи.
+- **Fail-Fast защита квот**: Локально отслеживает ваши лимиты RPM (Requests Per Minute) от Groq. Если вы превысили бесплатный лимит, плагин предупредит об этом *до* начала записи, экономя ваше время.
+- **Автоматический Retry**: Бесшовно обрабатывает кратковременные обрывы интернета, автоматически повторяя попытку отправки (1 раз).
+- **Model Tuning**: Настраивайте температуру (креативность), язык и "контекстный словарь" (например, заставьте Whisper лучше распознавать слова `TypeScript, React, OpenCode`) прямо в интерфейсе плагина.
+- **Горячая клавиша отмены**: Мгновенно прерывайте начатую запись, не отправляя мусорные данные на сервер.
 
-Опциональный CLI-установщик. Он запускает ту же установку через OpenCode и заранее скачивает managed engine:
+## Установка
 
-```bash
-npx @hxnnxs/opencode-voice install
-```
-
-Не клонируйте репозиторий, если не собираетесь разрабатывать плагин.
-
-> [!TIP]
-> При первом запуске откроется выбор модели. Выберите Whisper-модель, дождитесь загрузки и используйте `ctrl+r`, чтобы диктовать в prompt.
-
-### Требования
-
-Плагин сам управляет STT engine и моделями:
-
-- скачивает `whisper.cpp` из GitHub Release registry проекта
-- кладет его в `~/.cache/opencode-voice/engines/whisper.cpp/<platform>-<arch>/`
-- скачивает выбранную Whisper-модель при первом setup
-
-Ручная установка `whisper-cli` не нужна. Если локальный binary уже есть, `opencode-voice` всё ещё может импортировать или использовать его.
-
-Проверить машину:
+Одной командой прямо в OpenCode:
 
 ```bash
-npx @hxnnxs/opencode-voice doctor
+opencode plugin @loyslow/opencode-voice-groq
 ```
 
-Установить managed engine без открытия OpenCode:
+Альтернативный установщик через CLI:
 
 ```bash
-npx @hxnnxs/opencode-voice engine install whisper.cpp
+npx @loyslow/opencode-voice-groq install
 ```
 
-### Использование
+## Настройка
 
-Команды:
+При первом запуске плагин попросит настроить доступ.
+1. Получите бесплатный API ключ на [Groq Console](https://console.groq.com/keys).
+2. Введите ключ в окне плагина.
+3. Настройте горячие клавиши, модель и словарь через интерактивное меню.
 
-- `/voice` - переключить запись и вставить транскрипцию
-- `/voice-submit` - переключить запись, вставить транскрипцию и отправить
-- `/voice-stop` - отменить активную запись или транскрибацию
-- `/voice-settings` - открыть настройки модели, хоткеев, микрофона и диагностики
+Совет:
+Используйте команду `/voice-settings`, чтобы открыть меню (где доступен Model Tuning для изменения языка, температуры и контекста), а также для выбора микрофона.
 
-Хоткей по умолчанию:
+## Благодарности
 
-```txt
-ctrl+r -> начать запись
-ctrl+r -> остановить, распознать и вставить текст
-```
-
-Hold-to-talk отключен по умолчанию, потому что terminal release events зависят от терминала. Его можно включить в `/voice-settings`.
-
-### Модели
-
-Доступно сейчас через `whisper.cpp`:
-
-| Модель              | Размер | Примечание                    |
-| ------------------- | ------ | ----------------------------- |
-| Whisper Small       | 465 MB | дефолт, multilingual          |
-| Whisper Medium Q4_1 | 469 MB | выше точность                 |
-| Whisper Turbo       | 1.5 GB | крупная, быстрее full large   |
-| Whisper Large Q5_0  | 1.0 GB | точная, медленнее             |
-
-Загрузка моделей поддерживает resume, retry, progress и SHA256 verification.
-
-Запланированные sidecar-модели:
-
-- Parakeet V3
-- GigaAM v3
-- Moonshine V2 Small
-
-### Статус платформ
-
-| Платформа | Статус |
-| --------- | ------ |
-| Linux     | one-command engine/model install; запись использует `arecord`, `ffmpeg` или `sox` |
-| macOS     | one-command engine/model install; запись использует `ffmpeg` AVFoundation до native recorder sidecar |
-| Windows   | one-command engine/model/recorder install; запись через DirectShow и managed cached `ffmpeg.exe`, с fallback на системный/встроенный ffmpeg |
-
-### Архитектура
-
-Пакет повторяет публичную форму OpenCode TUI-плагинов, которую используют community-плагины.
-
-- npm package экспортирует `./tui`
-- локальная разработка может указать абсолютный путь в `tui.json`
-- published install использует `opencode plugin @hxnnxs/opencode-voice`
-- runtime settings хранятся в OpenCode TUI plugin storage
-
-Файлы:
-
-- `index.js` - TUI entrypoint, команды, dialogs, keymap layer
-- `lib/models.js` - registry моделей, cache paths, default settings
-- `lib/download.js` - resumable download и SHA256 verification
-- `lib/engine.js` - выбор recorder, managed Windows recorder install и transcription через `whisper-cli`
-- `lib/engines.js` - managed native engine download, status, import и removal
-- `bin/opencode-voice.js` - install wrapper и diagnostics CLI
-
-Voice input требует native audio и STT binaries. JS-плагин управляет OpenCode UI, settings, engine/model downloads и prompt insertion. Будущий native sidecar должен заменить shell recorders и добавить fast VAD плюс Handy-style models.
-
-### Roadmap
-
-- опубликовать managed `whisper-cli` release assets перед npm release
-- Rust recorder sidecar с `cpal` и VAD
-- поддержка Parakeet, GigaAM, SenseVoice, Canary и Moonshine
-- Улучшение устойчивости и UX Windows recorder
-- более быстрая streaming-style transcription
-
-### Разработка
-
-Запустить проверки:
-
-```bash
-npm run check
-npm pack --dry-run
-```
-
-У этого MVP нет build step.
-
-Установка из checkout для разработки:
-
-```bash
-git clone https://github.com/ihxnnxs/opencode-voice.git opencode-voice
-cd opencode-voice
-opencode plugin "$(pwd)"
-```
-
-### Статус проекта
-
-Это независимый OpenCode plugin. Его не разрабатывает команда OpenCode, и он не связан с OpenCode официально.
-
-### Кредиты
-
-- OpenCode wordmark SVG адаптирован из публичного [OpenCode repository](https://github.com/anomalyco/opencode). Метка `voice` добавлена для этого плагина.
-- Локальная транскрибация использует [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp).
-- Metadata загрузки моделей следует local-first UX, изученному в [Handy](https://github.com/cjpais/Handy).
-
----
-
-**OpenCode** [Website](https://opencode.ai) | [Docs](https://opencode.ai/docs) | [Discord](https://opencode.ai/discord)
+Этот плагин является жестким форком потрясающего оригинального проекта. Огромная благодарность оригинальному автору:
+- Оригинальный репозиторий: [ihxnnxs/opencode-voice](https://github.com/ihxnnxs/opencode-voice)

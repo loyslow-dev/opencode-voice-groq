@@ -1,174 +1,53 @@
 <p align="center">
-  <a href="https://github.com/ihxnnxs/opencode-voice">
-    <picture>
-      <source srcset="../assets/opencode-voice-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="../assets/opencode-voice-light.svg" media="(prefers-color-scheme: light)">
-      <img src="../assets/opencode-voice-light.svg" alt="opencode voice logo">
-    </picture>
-  </a>
-</p>
-<p align="center">OpenCode TUI 的本地语音转文字插件。</p>
-<p align="center">
-  <img alt="status" src="https://img.shields.io/badge/status-mvp-orange?style=flat-square" />
-  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" />
-  <img alt="opencode" src="https://img.shields.io/badge/opencode-%3E%3D1.17.4-black?style=flat-square" />
-  <img alt="stt" src="https://img.shields.io/badge/STT-local_whisper.cpp-purple?style=flat-square" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/opencode-voice-dark.svg">
+    <img alt="opencode voice groq" src="../assets/opencode-voice-light.svg">
+  </picture>
 </p>
 
-<p align="center">
-  <a href="../README.md">English</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.es.md">Español</a>
-</p>
+[English](../README.md) | [Русский](README.ru.md) | [简体中文](README.zh.md) | [Español](README.es.md)
 
----
+# opencode-voice-groq
 
-### 安装
+用于 [OpenCode](https://github.com/opencode-ai/opencode) 的超快云端语音输入插件，使用 Groq 的 Whisper API（`whisper-large-v3` 和 `whisper-large-v3-turbo`）。
 
-通过 OpenCode 一条命令安装：
+这是原版 `opencode-voice` 的高度优化分支。此插件无需在本地下载庞大的模型或消耗 CPU/GPU，而是使用 **Groq 的 LPU 推理引擎**。音频将即时记录、压缩为 `m4a` 格式、自动去除静音，并在毫秒级内完成转录。
 
-```bash
-opencode plugin @hxnnxs/opencode-voice
-```
+## 特点
 
-安装后重启 OpenCode。首次启动会自动下载 managed `whisper.cpp` engine 和你选择的模型。用户不需要手动安装 `whisper-cli`。
+- **超快转录**：由 Groq API 提供支持。
+- **高级音频压缩**：直接录制为 `.m4a` 以消除网络延迟。
+- **自动去除静音**：自动剪裁语音开头和结尾的静音部分。
+- **快速失败配额保护**：在本地跟踪 Groq 的每分钟请求数 (RPM)。如果您超出了免费额度限制，该插件会在您开始录音 *之前* 阻止您，以节省时间。
+- **自动重试**：如果遇到短暂的网络断开，将自动重试转录一次。
+- **模型微调**：可以在 UI 中配置温度、语言和上下文词汇（例如 `TypeScript, React`）。
+- **取消快捷键**：可立即中止录音，且不向服务器发送任何数据。
 
-可选 CLI 安装器。它会运行相同的 OpenCode plugin install 命令，并预下载 managed engine：
+## 安装
 
-```bash
-npx @hxnnxs/opencode-voice install
-```
-
-除非你要开发插件，否则不需要 clone 仓库。
-
-> [!TIP]
-> 首次启动会打开模型选择器。选择 Whisper 模型，等待下载完成，然后用 `ctrl+r` 向 prompt 听写。
-
-### 要求
-
-插件会管理 STT engine 和模型：
-
-- 从 opencode-voice GitHub Release registry 下载 `whisper.cpp`
-- 存到 `~/.cache/opencode-voice/engines/whisper.cpp/<platform>-<arch>/`
-- 首次 setup 时下载你选择的 Whisper 模型
-
-手动安装 `whisper-cli` 是可选项。如果本机已有 binary，`opencode-voice` 仍然可以导入或使用它。
-
-检查本机环境：
+在 OpenCode 中使用一条命令：
 
 ```bash
-npx @hxnnxs/opencode-voice doctor
+opencode plugin @loyslow/opencode-voice-groq
 ```
 
-不打开 OpenCode 也可以安装 managed engine：
+或使用可选的 CLI 安装程序：
 
 ```bash
-npx @hxnnxs/opencode-voice engine install whisper.cpp
+npx @loyslow/opencode-voice-groq install
 ```
 
-### 使用
+## 设置
 
-命令：
+首次启动时将打开设置提示。
+1. 在 [Groq Console](https://console.groq.com/keys) 获取免费 API 密钥。
+2. 输入 API 密钥。
+3. 通过交互式菜单配置您的快捷键、模型和上下文词汇。
 
-- `/voice` - 切换录音并插入转写文本
-- `/voice-submit` - 切换录音，插入转写文本并提交
-- `/voice-stop` - 取消当前录音或转写
-- `/voice-settings` - 打开模型、快捷键、麦克风和诊断设置
+提示：
+使用 `/voice-settings` 访问模型微调菜单或配置麦克风。
 
-默认快捷键：
+## 致谢
 
-```txt
-ctrl+r -> 开始录音
-ctrl+r -> 停止、转写并插入文本
-```
-
-默认关闭 hold-to-talk，因为 terminal release events 在不同终端中表现不一致。你仍然可以在 `/voice-settings` 中配置 hold 快捷键。
-
-### 模型
-
-当前通过 `whisper.cpp` 可用：
-
-| 模型                 | 大小   | 说明                    |
-| -------------------- | ------ | ----------------------- |
-| Whisper Small        | 465 MB | 默认，多语言            |
-| Whisper Medium Q4_1  | 469 MB | 更高准确率              |
-| Whisper Turbo        | 1.5 GB | 大模型，比 full large 快 |
-| Whisper Large Q5_0   | 1.0 GB | 准确，但更慢            |
-
-模型下载支持断点续传、重试、进度显示和 SHA256 校验。
-
-计划中的 sidecar 模型：
-
-- Parakeet V3
-- GigaAM v3
-- Moonshine V2 Small
-
-### 平台状态
-
-| 平台    | 状态 |
-| ------- | ---- |
-| Linux   | 一条命令安装 engine/model；录音使用 `arecord`、`ffmpeg` 或 `sox` |
-| macOS   | 一条命令安装 engine/model；native recorder sidecar 发布前使用 `ffmpeg` AVFoundation |
-| Windows | 一条命令安装 engine/model/recorder；通过 managed cached `ffmpeg.exe` + DirectShow 录音，并保留系统/内置 ffmpeg 备用 |
-
-### 架构
-
-该包采用 OpenCode community TUI 插件使用的公共结构。
-
-- npm package 导出 `./tui`
-- 本地开发可以在 `tui.json` 中使用绝对路径
-- 发布后使用 `opencode plugin @hxnnxs/opencode-voice` 安装
-- runtime settings 存储在 OpenCode TUI plugin storage 中
-
-文件：
-
-- `index.js` - TUI 插件入口、命令、dialogs、keymap layer
-- `lib/models.js` - 模型 registry、cache paths、default settings
-- `lib/download.js` - 可续传下载和 SHA256 校验
-- `lib/engine.js` - recorder 选择、managed Windows recorder 安装和 `whisper-cli` 转写
-- `lib/engines.js` - managed native engine 下载、状态、导入和移除
-- `bin/opencode-voice.js` - install wrapper 和 diagnostics CLI
-
-语音输入需要 native audio 和 STT binaries。JS 插件负责 OpenCode UI、settings、engine/model downloads 和 prompt insertion。未来的 native sidecar 应替换 shell recorders，并加入 fast VAD 和 Handy-style models。
-
-### Roadmap
-
-- npm release 前发布 managed `whisper-cli` release assets
-- 使用 `cpal` 和 VAD 的 Rust recorder sidecar
-- 支持 Parakeet、GigaAM、SenseVoice、Canary 和 Moonshine
-- 更完善的 Windows 录音体验和稳定性
-- 更快的 streaming-style transcription
-
-### 开发
-
-运行检查：
-
-```bash
-npm run check
-npm pack --dry-run
-```
-
-此 MVP 没有 build step。
-
-从 checkout 安装开发版本：
-
-```bash
-git clone https://github.com/ihxnnxs/opencode-voice.git opencode-voice
-cd opencode-voice
-opencode plugin "$(pwd)"
-```
-
-### 项目状态
-
-这是独立的 OpenCode plugin。它不是 OpenCode 团队构建的项目，也不隶属于 OpenCode。
-
-### 鸣谢
-
-- OpenCode wordmark SVG 改编自公开的 [OpenCode repository](https://github.com/anomalyco/opencode)。`voice` 标记为本插件新增。
-- 本地转写使用 [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp)。
-- 模型下载 metadata 参考了 [Handy](https://github.com/cjpais/Handy) 的 local-first UX。
-
----
-
-**OpenCode** [Website](https://opencode.ai) | [Docs](https://opencode.ai/docs) | [Discord](https://opencode.ai/discord)
+非常感谢原始项目的作者：
+- 原始仓库：[ihxnnxs/opencode-voice](https://github.com/ihxnnxs/opencode-voice)

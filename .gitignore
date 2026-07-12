@@ -1,22 +1,4 @@
 node_modules/
-dist/
-coverage/
-.codegraph/
-.env
-.env.*
-*.log
-
-# Local model/runtime artifacts
-models/
-*.partial
-*.wav
-*.mp3
-*.flac
-
-# Native sidecar build output
-target/
-
-# OS/editor files
+.cache/
 .DS_Store
-.idea/
-.vscode/
+*.log

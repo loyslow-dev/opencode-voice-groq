@@ -1,75 +1,73 @@
 {
-  "name": "@hxnnxs/opencode-voice",
-  "version": "0.1.9",
-  "description": "Local voice input plugin for OpenCode",
-  "type": "module",
-  "license": "MIT",
-  "readmeFilename": "README.md",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ihxnnxs/opencode-voice.git"
-  },
-  "bugs": {
-    "url": "https://github.com/ihxnnxs/opencode-voice/issues"
-  },
-  "homepage": "https://github.com/ihxnnxs/opencode-voice#readme",
-  "main": "./index.js",
-  "exports": {
-    ".": {
-      "import": "./index.js"
+    "name":  "@loyslow/opencode-voice-groq",
+    "version":  "0.1.0",
+    "bin": {
+        "opencode-voice-groq": "bin/cli.js"
     },
-    "./tui": {
-      "import": "./index.js"
-    },
-    "./runtime": {
-      "import": "./lib/engine.js"
-    }
-  },
-  "bin": {
-    "opencode-voice": "bin/opencode-voice.js"
-  },
-  "files": [
-    "assets/",
-    "bin/",
-    "lib/",
-    "index.js",
-    "CHANGELOG.md",
-    "CONTRIBUTING.md",
-    "PUBLISHING.md",
-    "README.md",
-    "docs/README*.md",
-    "SECURITY.md",
-    "LICENSE"
-  ],
-  "scripts": {
-    "check": "node --check index.js && node --check lib/models.js && node --check lib/download.js && node --check lib/engine.js && node --check lib/engines.js && node --check bin/opencode-voice.js && node --check scripts/package-engine-asset.mjs && node --check scripts/build-engine-registry.mjs",
-    "prepack": "npm run check"
-  },
-  "dependencies": {
-    "ffmpeg-static": "^5.2.0"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
-  "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.17.4 <2"
-  },
-  "peerDependenciesMeta": {
-    "@opencode-ai/plugin": {
-      "optional": true
-    }
-  },
-  "keywords": [
-    "opencode",
-    "opencode-plugin",
-    "voice",
-    "speech-to-text",
-    "whisper",
-    "whisper.cpp"
-  ],
-  "engines": {
-    "node": ">=20",
-    "opencode": ">=1.17.4"
-  }
+    "description":  "Groq voice input plugin for OpenCode",
+    "type":  "module",
+    "license":  "MIT",
+    "readmeFilename":  "README.md",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "git+https://github.com/ihxnnxs/opencode-voice.git"
+                   },
+    "bugs":  {
+                 "url":  "https://github.com/ihxnnxs/opencode-voice/issues"
+             },
+    "homepage":  "https://github.com/ihxnnxs/opencode-voice#readme",
+    "main":  "./index.js",
+    "exports":  {
+                    ".":  {
+                              "import":  "./index.js"
+                          },
+                    "./tui":  {
+                                  "import":  "./index.js"
+                              },
+                    "./runtime":  {
+                                      "import":  "./lib/engine.js"
+                                  }
+                },
+    "files":  [
+                  "assets/",
+                  "bin/",
+                  "lib/",
+                  "index.js",
+                  "CHANGELOG.md",
+                  "CONTRIBUTING.md",
+                  "PUBLISHING.md",
+                  "README.md",
+                  "docs/README*.md",
+                  "SECURITY.md",
+                  "LICENSE"
+              ],
+    "scripts":  {
+                    "prepack":  "node -c index.js && node -c lib/engine.js"
+                },
+    "dependencies":  {
+                         "ffmpeg-static":  "^5.2.0"
+                     },
+    "publishConfig":  {
+                          "access":  "public"
+                      },
+    "peerDependencies":  {
+                             "@opencode-ai/plugin":  "\u003e=1.17.4 \u003c2"
+                         },
+    "peerDependenciesMeta":  {
+                                 "@opencode-ai/plugin":  {
+                                                             "optional":  true
+                                                         }
+                             },
+    "keywords":  [
+                     "opencode",
+                     "opencode-plugin",
+                     "voice",
+                     "speech-to-text",
+                     "whisper",
+                     "whisper.cpp"
+                 ],
+    "engines":  {
+                    "node":  "\u003e=20",
+                    "opencode":  "\u003e=1.17.4"
+                }
 }

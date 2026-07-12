@@ -1,48 +1,68 @@
-import { MODELS, DEFAULT_SETTINGS, PLUGIN_ID, formatSize, getCacheDir, getModel, getModelPath, isModelDownloaded, isModelFilePresent } from "./lib/models.js";
-import { downloadModel } from "./lib/download.js";
-import { VoiceRuntime, ensureManagedRecorder, getRecorderStatus, listMicrophones, probeRecorder, resolveCommand } from "./lib/engine.js";
-import { getEngineStatus, importManagedEngine, installManagedEngine, probeEngine, removeManagedEngine } from "./lib/engines.js";
+﻿import fs from "node:fs";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { VoiceRuntime, ensureManagedRecorder, getRecorderStatus, listMicrophones, probeRecorder, getCacheDir } from "./lib/engine.js";
+
+const PLUGIN_ID = "opencode-voice-groq";
 
 const KV = {
   hotkey: "voice.hotkey",
   toggleHotkey: "voice.toggleHotkey",
   submitHotkey: "voice.submitHotkey",
+  cancelHotkey: "voice.cancelHotkey",
   model: "voice.model",
-  language: "voice.language",
   mic: "voice.mic",
   autoSubmit: "voice.autoSubmit",
-  downloadDir: "voice.downloadDir",
-  onboardingDone: "voice.onboardingDone",
-  setupSkipped: "voice.setupSkipped",
+  groqApiKey: "voice.groqApiKey",
+  language: "voice.language",
+  temperature: "voice.temperature",
+  prompt: "voice.prompt",
+};
+
+const MODELS = [
+  { id: "whisper-large-v3", name: "Whisper Large v3" },
+  { id: "whisper-large-v3-turbo", name: "Whisper Large v3 Turbo" }
+];
+
+const DEFAULT_SETTINGS = {
+  model: "whisper-large-v3",
+  hotkey: "",
+  toggleHotkey: "ctrl+r",
+  submitHotkey: "",
+  cancelHotkey: "",
+  mic: "",
+  autoSubmit: false,
+  groqApiKey: "",
+  language: "auto",
+  temperature: 0.0,
+  prompt: "JavaScript, TypeScript, React, OpenCode, API, JSON, bash, python",
 };
 
 function readSettings(kv) {
   const settings = { ...DEFAULT_SETTINGS };
   for (const [name, key] of Object.entries(KV)) settings[name] = kv.get(key, settings[name]);
 
-  if (!getModel(settings.model)?.implemented) settings.model = DEFAULT_SETTINGS.model;
+  if (!MODELS.find(m => m.id === settings.model)) settings.model = DEFAULT_SETTINGS.model;
   settings.hotkey = String(settings.hotkey || "").trim();
   settings.toggleHotkey = String(settings.toggleHotkey || "").trim();
   settings.submitHotkey = String(settings.submitHotkey || "").trim();
-  settings.language = String(settings.language || "auto").trim() || "auto";
+  settings.cancelHotkey = String(settings.cancelHotkey || "").trim();
+  if (settings.cancelHotkey === "escape") {
+    settings.cancelHotkey = "";
+    kv.set(KV.cancelHotkey, "");
+  }
   settings.mic = String(settings.mic || "").trim();
-  settings.downloadDir = String(settings.downloadDir || "").trim();
+  settings.groqApiKey = String(settings.groqApiKey || "").trim();
+  settings.language = String(settings.language || "auto").trim();
+  settings.prompt = String(settings.prompt || "").trim();
+  settings.temperature = Number(settings.temperature) || 0.0;
   settings.autoSubmit = Boolean(settings.autoSubmit);
-  settings.onboardingDone = Boolean(settings.onboardingDone);
-  settings.setupSkipped = Boolean(settings.setupSkipped);
   return settings;
 }
 
 function writeSetting(kv, name, value) {
   kv.set(KV[name], value);
-}
-
-function migrateSettings(kv) {
-  // Early builds defaulted the hold-to-talk key to space, but terminal release
-  // events are too inconsistent. Keep ctrl+r as the reliable toggle key.
-  const holdHotkey = kv.get(KV.hotkey, undefined);
-  if (holdHotkey === "space" || holdHotkey === "ctrl+r") kv.set(KV.hotkey, DEFAULT_SETTINGS.hotkey);
-  if (!kv.get(KV.toggleHotkey, undefined)) kv.set(KV.toggleHotkey, DEFAULT_SETTINGS.toggleHotkey);
 }
 
 function toast(api, message, variant = "info") {
@@ -54,533 +74,265 @@ function setDialog(ctx, size, render) {
   ctx.api.ui.dialog.replace(render);
 }
 
-function formatBytes(value) {
-  if (!value || value < 0) return "0 MB";
-  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
-  return `${Math.max(1, Math.round(value / 1024 / 1024))} MB`;
+function renderProgressBars(currentRequests, maxLimit) {
+  const totalBlocks = 15;
+  const percent = maxLimit > 0 ? (currentRequests / maxLimit) * 100 : 0;
+  const filledBlocks = Math.round((percent / 100) * totalBlocks);
+  const emptyBlocks = Math.max(0, totalBlocks - filledBlocks);
+  const bar = '█'.repeat(filledBlocks) + '░'.repeat(emptyBlocks);
+  return `${currentRequests} / ${maxLimit} [${bar}]`;
 }
 
-function formatRate(bytesPerSecond) {
-  if (!bytesPerSecond || bytesPerSecond < 1) return "warming up";
-  if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
-  return `${Math.max(1, Math.round(bytesPerSecond / 1024))} KB/s`;
-}
-
-function formatDuration(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 1) return "calculating";
-  const total = Math.ceil(seconds);
-  const minutes = Math.floor(total / 60);
-  const rest = total % 60;
-  if (!minutes) return `${rest}s`;
-  return `${minutes}m ${String(rest).padStart(2, "0")}s`;
-}
-
-function progressBar(percent) {
-  const total = 34;
-  const filled = Math.max(0, Math.min(total, Math.round((percent / 100) * total)));
-  return `${"█".repeat(filled)}${"░".repeat(total - filled)}`;
-}
-
-function progressLine(percent) {
-  return `${progressBar(percent)}  ${String(Math.round(percent)).padStart(3, " ")}%`;
-}
-
-function renderDownloadStatus(ctx, model, progress = {}) {
-  const percent = Math.max(0, Math.min(100, progress.percent || 0));
-  const state = progress.state === "verifying" ? "Verifying checksum" : progress.state === "done" ? "Ready" : "Downloading model";
-  const downloaded = progress.downloaded || 0;
-  const total = progress.total || (model.sizeMB ? model.sizeMB * 1024 * 1024 : 0);
-  const remaining = total && progress.speedBps ? (total - downloaded) / progress.speedBps : Number.NaN;
-  const attempt = progress.attempts > 1 ? `${progress.attempt} of ${progress.attempts}` : "single pass";
-
-  setDialog(ctx, "xlarge", () =>
-    ctx.api.ui.DialogAlert({
-      title: "Downloading voice model",
-      message: [
-        model.name,
-        "",
-        state,
-        progressLine(percent),
-        "",
-        `${formatBytes(downloaded)} of ${formatBytes(total)}`,
-        `${formatRate(progress.speedBps)} · ETA ${formatDuration(remaining)}`,
-        `Attempt ${attempt}`,
-        progress.state === "verifying" ? "Verifying SHA256 before activating the model." : "Interrupted downloads resume automatically.",
-      ].join("\n"),
-    }),
-  );
-}
-
-function renderEngineInstallStatus(ctx, progress = {}) {
-  const percent = Math.max(0, Math.min(100, progress.percent || 0));
-  const state = {
-    registry: "Loading engine registry",
-    downloading: "Downloading whisper.cpp engine",
-    verifying: "Verifying engine archive",
-    decompressing: "Unpacking engine",
-    "verifying-binary": "Verifying engine binary",
-    probing: "Checking whisper-cli",
-    done: "Native engine ready",
-  }[progress.state] || "Preparing native engine";
-  const attempt = progress.attempts > 1 ? `${progress.attempt} of ${progress.attempts}` : "single pass";
-
-  setDialog(ctx, "xlarge", () =>
-    ctx.api.ui.DialogAlert({
-      title: "Installing voice engine",
-      message: [
-        "whisper.cpp",
-        "",
-        state,
-        progressLine(percent),
-        "",
-        progress.total ? `${formatBytes(progress.downloaded || 0)} of ${formatBytes(progress.total)}` : "Fetching release metadata",
-        `Attempt ${attempt}`,
-        "This is downloaded once into the managed opencode-voice cache.",
-      ].join("\n"),
-    }),
-  );
-}
-
-function renderRecorderInstallStatus(ctx, progress = {}) {
-  const percent = Math.max(0, Math.min(100, progress.percent || 0));
-  const state = {
-    downloading: "Downloading Windows recorder",
-    decompressing: "Unpacking ffmpeg",
-    probing: "Checking ffmpeg",
-    done: "Windows recorder ready",
-  }[progress.state] || "Preparing Windows recorder";
-  const attempt = progress.attempts > 1 ? `${progress.attempt} of ${progress.attempts}` : "single pass";
-
-  setDialog(ctx, "xlarge", () =>
-    ctx.api.ui.DialogAlert({
-      title: "Installing Windows recorder",
-      message: [
-        "ffmpeg DirectShow",
-        "",
-        state,
-        progressLine(percent),
-        "",
-        progress.total ? `${formatBytes(progress.downloaded || 0)} of ${formatBytes(progress.total)}` : "Fetching recorder binary",
-        `Attempt ${attempt}`,
-        "This is downloaded once into the managed opencode-voice cache.",
-      ].join("\n"),
-    }),
-  );
-}
-
-function modelStatus(model, options, settings) {
-  if (!model.implemented) return "planned";
-  if (isModelFilePresent(model, options, settings) && !isModelDownloaded(model, options, settings)) return "needs verification";
-  return isModelDownloaded(model, options, settings) ? "downloaded" : "not downloaded";
-}
-
-function modelOptions(options, settings) {
-  return MODELS.map((model) => ({
-    title: `${model.implemented && isModelDownloaded(model, options, settings) ? "[downloaded]" : model.implemented ? "[download]" : "[planned]"} ${model.name} - ${formatSize(model)}`,
-    value: model.id,
-    category: model.implemented ? "Available now" : "Planned sidecar models",
-    disabled: !model.implemented,
-    truncateTitle: false,
-    details: [`${model.engine} - ${model.languages} - ${modelStatus(model, options, settings)}`, model.description],
-  }));
-}
-
-async function ensureDownloaded(ctx, model, settings) {
-  if (isModelDownloaded(model, ctx.options, settings)) return true;
-
-  const startedAt = Date.now();
-  let lastRender = 0;
-  let speedBps = 0;
-  renderDownloadStatus(ctx, model, { state: "starting", downloaded: 0, total: model.sizeMB ? model.sizeMB * 1024 * 1024 : 0, percent: 0, attempt: 1, attempts: 5, speedBps });
-
-  toast(ctx.api, `Downloading ${model.name}...`);
-  await downloadModel(model, ctx.options, settings, {
-    retries: 5,
-    onProgress: (progress) => {
-      const now = Date.now();
-      const elapsed = Math.max(1, (now - startedAt) / 1000);
-      speedBps = progress.downloaded ? progress.downloaded / elapsed : speedBps;
-      if (progress.state !== "done" && progress.state !== "verifying" && now - lastRender < 350) return;
-      lastRender = now;
-      renderDownloadStatus(ctx, model, { ...progress, speedBps });
-    },
-    onRetry: ({ error, nextAttempt, attempts }) => {
-      renderDownloadStatus(ctx, model, {
-        state: "downloading",
-        downloaded: 0,
-        total: model.sizeMB ? model.sizeMB * 1024 * 1024 : 0,
-        percent: 0,
-        attempt: nextAttempt,
-        attempts,
-        speedBps: 0,
-      });
-      toast(ctx.api, `Download retry ${nextAttempt}/${attempts}: ${error instanceof Error ? error.message : String(error)}`, "warning");
-    },
-  });
-  toast(ctx.api, `${model.name} downloaded`, "success");
-  return true;
-}
-
-async function ensureEngineReady(ctx, settings) {
-  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir };
-  const current = getEngineStatus("whisper.cpp", ctx.options, settings);
-  if (current.resolvedBinary) {
-    const probe = await probeEngine("whisper.cpp", current.resolvedBinary);
-    if (probe.ok) return true;
+function getLocalRPM(kv, modelId) {
+  const key = modelId === 'whisper-large-v3-turbo' ? 'voice.rpm_turbo' : 'voice.rpm_v3';
+  const historyStr = kv.get(key, "");
+  let history = historyStr ? historyStr.split(",").map(Number) : [];
+  const now = Date.now();
+  history = history.filter(t => now - t < 60000);
+  
+  if (history.length !== (historyStr ? historyStr.split(",").length : 0)) {
+     kv.set(key, history.join(","));
   }
-
-  renderEngineInstallStatus(ctx, { state: "registry", downloaded: 0, total: 0, percent: 0, attempt: 1, attempts: 5 });
-  toast(ctx.api, "Installing local voice engine...");
-  await installManagedEngine("whisper.cpp", commandOptions, settings, {
-    retries: 5,
-    onProgress: (progress) => renderEngineInstallStatus(ctx, progress),
-    onRetry: ({ error, nextAttempt, attempts }) => {
-      renderEngineInstallStatus(ctx, { state: "downloading", downloaded: 0, total: 0, percent: 0, attempt: nextAttempt, attempts });
-      toast(ctx.api, `Engine install retry ${nextAttempt}/${attempts}: ${error instanceof Error ? error.message : String(error)}`, "warning");
-    },
-  });
-  toast(ctx.api, "Voice engine installed", "success");
-  return true;
+  return 20 - history.length;
 }
 
-async function ensureRecorderReady(ctx, settings) {
-  if (process.platform !== "win32") return true;
+export function recordRequest(kv, modelId) {
+  const key = modelId === 'whisper-large-v3-turbo' ? 'voice.rpm_turbo' : 'voice.rpm_v3';
+  const historyStr = kv.get(key, "");
+  let history = historyStr ? historyStr.split(",").map(Number) : [];
+  const now = Date.now();
+  history = history.filter(t => now - t < 60000);
+  history.push(now);
+  kv.set(key, history.join(","));
+}
 
-  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir, skipFfmpegStaticInstall: true };
-  const current = getRecorderStatus(commandOptions, settings);
-  if (current.resolvedBinary) {
-    const probe = await probeRecorder(current.resolvedBinary);
-    if (probe.ok) return true;
+async function fetchQuotaForModel(apiKey, modelId, kv) {
+  const dummyWav = new Uint8Array([
+    0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45, 
+    0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 
+    0x44, 0xac, 0x00, 0x00, 0x88, 0x58, 0x01, 0x00, 0x02, 0x00, 0x10, 0x00, 
+    0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00
+  ]);
+  
+  const blob = new Blob([dummyWav], { type: 'audio/wav' });
+  const formData = new FormData();
+  formData.append('file', blob, 'test.wav');
+  formData.append('model', modelId);
+  
+  const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}` },
+    body: formData
+  });
+
+  if (response.status === 401) {
+    throw new Error("Unauthorized: Invalid API Key");
   }
+  
+  const rpmRem = Math.max(0, getLocalRPM(kv, modelId));
 
-  renderRecorderInstallStatus(ctx, { state: "downloading", downloaded: 0, total: 0, percent: 0, attempt: 1, attempts: 5 });
-  toast(ctx.api, "Installing local Windows recorder...");
-  await ensureManagedRecorder(commandOptions, settings, {
-    retries: 5,
-    onProgress: (progress) => renderRecorderInstallStatus(ctx, progress),
-    onRetry: ({ error, nextAttempt, attempts }) => {
-      renderRecorderInstallStatus(ctx, { state: "downloading", downloaded: 0, total: 0, percent: 0, attempt: nextAttempt, attempts });
-      toast(ctx.api, `Recorder install retry ${nextAttempt}/${attempts}: ${error instanceof Error ? error.message : String(error)}`, "warning");
-    },
-  });
-  toast(ctx.api, "Windows recorder installed", "success");
-  return true;
+  return {
+    rpdRem: Number(response.headers.get('x-ratelimit-remaining-requests')) || 0,
+    rpdLim: Number(response.headers.get('x-ratelimit-limit-requests')) || 0,
+    rpmRem: rpmRem,
+    rpmLim: 20
+  };
 }
 
-function showModelPicker(ctx, firstRun = false) {
-  const settings = readSettings(ctx.api.kv);
-  setDialog(ctx, "large", () =>
-    ctx.api.ui.DialogSelect({
-      title: firstRun ? "Set up voice input: choose a local model" : "Voice model",
-      placeholder: "Search voice models...",
-      current: settings.model,
-      options: [
-        ...modelOptions(ctx.options, settings),
-        ...(firstRun
-          ? [
-              {
-                title: "Skip setup for now",
-                value: "__skip",
-                category: "Setup",
-                description: "You can open this again with /voice-settings.",
-              },
-            ]
-          : []),
-      ],
-      onSelect: async (option) => {
-        if (option.value === "__skip") {
-          writeSetting(ctx.api.kv, "onboardingDone", true);
-          writeSetting(ctx.api.kv, "setupSkipped", true);
-          ctx.api.ui.dialog.clear();
-          toast(ctx.api, "Voice setup skipped. Use /voice-settings when ready.");
-          return;
-        }
-
-        const model = getModel(option.value);
-        if (!model?.implemented) return;
-
-        const nextSettings = { ...readSettings(ctx.api.kv), model: model.id };
-        writeSetting(ctx.api.kv, "model", model.id);
-        writeSetting(ctx.api.kv, "onboardingDone", true);
-        writeSetting(ctx.api.kv, "setupSkipped", false);
-
-        try {
-          await ensureEngineReady(ctx, nextSettings);
-          await ensureDownloaded(ctx, model, nextSettings);
-          ctx.api.ui.dialog.clear();
-        } catch (error) {
-          showError(ctx, "Voice setup failed", error);
-        }
-      },
-    }),
-  );
-}
-
-function shouldShowStartupModelPicker(ctx) {
-  const settings = readSettings(ctx.api.kv);
-  const model = getModel(settings.model);
-  return !settings.onboardingDone || (!settings.setupSkipped && !isModelDownloaded(model, ctx.options, settings));
-}
-
-function showPrompt(ctx, input) {
-  setDialog(ctx, "medium", () =>
-    ctx.api.ui.DialogPrompt({
-      title: input.title,
-      placeholder: input.placeholder,
-      value: input.value,
-      onConfirm: (value) => {
-        input.onConfirm(value);
-      },
-      onCancel: () => showSettings(ctx),
-    }),
-  );
-}
-
-function showLanguagePicker(ctx) {
-  const settings = readSettings(ctx.api.kv);
-  const options = [
-    { title: "Auto detect", value: "auto", description: "Let Whisper detect the language." },
-    { title: "Russian", value: "ru" },
-    { title: "English", value: "en" },
-    { title: "German", value: "de" },
-    { title: "Spanish", value: "es" },
-    { title: "French", value: "fr" },
-    { title: "Custom code", value: "__custom", description: "Enter a Whisper language code manually." },
-  ];
-
-  setDialog(ctx, "medium", () =>
-    ctx.api.ui.DialogSelect({
-      title: "Voice language",
-      current: settings.language,
-      options,
-      onSelect: (option) => {
-        if (option.value === "__custom") {
-          showPrompt(ctx, {
-            title: "Custom language code",
-            placeholder: "ru, en, de, ...",
-            value: settings.language === "auto" ? "" : settings.language,
-            onConfirm: (value) => {
-              writeSetting(ctx.api.kv, "language", value.trim() || "auto");
-              showSettings(ctx);
-            },
-          });
-          return;
-        }
-
-        writeSetting(ctx.api.kv, "language", option.value);
-        showSettings(ctx);
-      },
-    }),
-  );
-}
-
-function showMicrophonePicker(ctx) {
-  const settings = readSettings(ctx.api.kv);
-  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir, skipFfmpegStaticInstall: true };
-  const placeholder = process.platform === "win32" ? "default, audio=default, \"Microphone (Name)\"" : "default, hw:0,0, pulse, :0, ...";
-  const devices = listMicrophones(commandOptions);
-  setDialog(ctx, "large", () =>
-    ctx.api.ui.DialogSelect({
-      title: "Voice microphone",
-      current: settings.mic || "",
-      options: [
-        { title: "System default", value: "", description: "Use the default input device." },
-        ...devices.map((device) => ({ title: device, value: device })),
-        { title: "Custom device", value: "__custom", description: "Enter ffmpeg/arecord device manually." },
-      ],
-      onSelect: (option) => {
-        if (option.value === "__custom") {
-          showPrompt(ctx, {
-            title: "Custom microphone device",
-            placeholder,
-            value: settings.mic,
-            onConfirm: (value) => {
-              writeSetting(ctx.api.kv, "mic", value.trim());
-              showSettings(ctx);
-            },
-          });
-          return;
-        }
-
-        writeSetting(ctx.api.kv, "mic", option.value);
-        showSettings(ctx);
-      },
-    }),
-  );
-}
-
-function showDiagnostics(ctx) {
-  const settings = readSettings(ctx.api.kv);
-  const model = getModel(settings.model);
-  const commandOptions = { ...ctx.options, downloadDir: settings.downloadDir, skipFfmpegStaticInstall: true };
-  const whisperCli = resolveCommand("whisper-cli", commandOptions);
-  const ffmpeg = resolveCommand("ffmpeg", commandOptions);
-  const arecord = resolveCommand("arecord", commandOptions);
-  const sox = resolveCommand("sox", commandOptions);
-  const engine = getEngineStatus("whisper.cpp", ctx.options, settings);
-  const recorder = getRecorderStatus(commandOptions, settings);
-  const lines = [
-    `Platform: ${process.platform}-${process.arch}`,
-    `Recorder: ffmpeg=${ffmpeg ? "yes" : "no"}${ffmpeg ? ` (${ffmpeg})` : ""}, arecord=${arecord ? "yes" : "no"}, sox=${sox ? "yes" : "no"}`,
-    `Recorder source: ${recorder.source}`,
-    `Managed recorder dir: ${recorder.managedDir}`,
-    `Managed recorder installed: ${recorder.managedInstalled ? "yes" : "no"}`,
-    `Managed recorder version: ${recorder.manifest?.version || "missing"}`,
-    `Engine: ${engine.id}`,
-    `Engine source: ${engine.source}`,
-    `whisper-cli: ${whisperCli || "missing"}`,
-    `Managed engine dir: ${engine.managedDir}`,
-    `Managed installed: ${engine.managedInstalled ? "yes" : "no"}`,
-    `Managed version: ${engine.manifest?.version || "missing"}`,
-    `Active model: ${model.name}`,
-    `Model downloaded: ${isModelDownloaded(model, ctx.options, settings) ? "yes" : "no"}`,
-    `Model path: ${getModelPath(model, ctx.options, settings)}`,
-    `Cache dir: ${getCacheDir(ctx.options, settings)}`,
-  ];
-
-  setDialog(ctx, "medium", () =>
-    ctx.api.ui.DialogAlert({
-      title: "Voice diagnostics",
-      message: lines.join("\n"),
-      onConfirm: () => showSettings(ctx),
-    }),
-  );
-}
-
-function showEngineManager(ctx) {
-  const settings = readSettings(ctx.api.kv);
-  const status = getEngineStatus("whisper.cpp", ctx.options, settings);
-  const canImport = Boolean(status.resolvedBinary && status.source !== "managed");
-  const options = [
-    {
-      title: "Use detected whisper-cli as managed engine",
-      value: "import",
-      description: canImport ? status.resolvedBinary : "No external whisper-cli detected",
-      disabled: !canImport,
-    },
-    {
-      title: "Install managed whisper.cpp",
-      value: "install",
-      description: "Download the matching native engine from GitHub Releases.",
-    },
-    {
-      title: "Remove managed engine",
-      value: "remove",
-      description: status.managedInstalled ? status.managedBinary : "No managed engine installed",
-      disabled: !status.managedInstalled,
-    },
-    { title: "Diagnostics", value: "diagnostics", description: "Show recorder, model, and engine paths." },
-    { title: "Back", value: "back" },
-  ];
-
-  setDialog(ctx, "large", () =>
-    ctx.api.ui.DialogSelect({
-      title: "Native engine",
-      options,
-      footer: [
-        `Source: ${status.source}`,
-        `Resolved: ${status.resolvedBinary || "missing"}`,
-        `Managed: ${status.managedBinary}`,
-      ].join("\n"),
-      onSelect: async (option) => {
-        if (option.value === "back") showSettings(ctx);
-        if (option.value === "diagnostics") showDiagnostics(ctx);
-        if (option.value === "import") {
-          try {
-            const result = await importManagedEngine("whisper.cpp", status.resolvedBinary, ctx.options, settings);
-            toast(ctx.api, `Managed engine imported: ${result.managedBinary}`, "success");
-            showEngineManager(ctx);
-          } catch (error) {
-            showError(ctx, "Engine import failed", error);
-          }
-        }
-        if (option.value === "install") {
-          try {
-            await ensureEngineReady(ctx, settings);
-            showEngineManager(ctx);
-          } catch (error) {
-            showError(ctx, "Engine install failed", error);
-          }
-        }
-        if (option.value === "remove") {
-          try {
-            await removeManagedEngine("whisper.cpp", ctx.options, settings);
-            toast(ctx.api, "Managed engine removed");
-            showEngineManager(ctx);
-          } catch (error) {
-            showError(ctx, "Engine remove failed", error);
-          }
-        }
-      },
-    }),
-  );
-}
-
-function showError(ctx, title, error) {
-  setDialog(ctx, "medium", () =>
-    ctx.api.ui.DialogAlert({
-      title,
-      message: error instanceof Error ? error.message : String(error),
-      onConfirm: () => showSettings(ctx),
-    }),
-  );
-}
-
-async function downloadActiveModel(ctx) {
-  const settings = readSettings(ctx.api.kv);
-  const model = getModel(settings.model);
+async function checkGroqQuota(ctx, apiKey) {
+  if (!apiKey) {
+    toast(ctx.api, "Please set your API Key first", "error");
+    return;
+  }
+  
+  toast(ctx.api, "Checking Quota limits...", "info");
+  
   try {
-    await ensureEngineReady(ctx, settings);
-    await ensureDownloaded(ctx, model, settings);
+    const v3 = await fetchQuotaForModel(apiKey, 'whisper-large-v3', ctx.api.kv);
+    const v3turbo = await fetchQuotaForModel(apiKey, 'whisper-large-v3-turbo', ctx.api.kv);
+    
+    const formatLimit = (rem, lim) => {
+      if (lim === 0) return "N/A (not provided by API)";
+      return renderProgressBars(rem, lim);
+    };
+    
+    setDialog(ctx, "large", () =>
+      ctx.api.ui.DialogAlert({
+        title: "Quota limits",
+        message: [
+          "whisper-large-v3",
+          `Available Requests: ${formatLimit(v3.rpdRem, v3.rpdLim)}`,
+          `Local RPM Tracker:  ${formatLimit(v3.rpmRem, v3.rpmLim)}`,
+          "",
+          "whisper-large-v3-turbo",
+          `Available Requests: ${formatLimit(v3turbo.rpdRem, v3turbo.rpdLim)}`,
+          `Local RPM Tracker:  ${formatLimit(v3turbo.rpmRem, v3turbo.rpmLim)}`,
+          "",
+          "* Note: Groq requests replenish continuously every few seconds."
+        ].join("\n"),
+        onConfirm: () => showSettings(ctx)
+      })
+    );
+  } catch (err) {
+    toast(ctx.api, "Failed to check quotas: " + err.message, "error");
     showSettings(ctx);
-  } catch (error) {
-    showError(ctx, "Model download failed", error);
   }
 }
 
-function showSettings(ctx) {
+function showModelTuning(ctx) {
   const settings = readSettings(ctx.api.kv);
-  const model = getModel(settings.model);
-  const downloaded = isModelDownloaded(model, ctx.options, settings);
 
   setDialog(ctx, "large", () =>
     ctx.api.ui.DialogSelect({
-      title: "Voice settings",
+      title: "Model Tuning",
       options: [
-        {
-          title: "Model",
-          value: "model",
-          description: `${model.name} · ${downloaded ? "downloaded" : "not downloaded"}`,
-        },
-        {
-          title: downloaded ? "Re-download active model" : "Download active model",
-          value: "download",
-          description: `${model.name} · ${formatSize(model)}`,
-        },
-        {
-          title: "Hold hotkey",
-          value: "hotkey",
-          description: settings.hotkey ? `hold ${settings.hotkey}` : "disabled",
-        },
-        {
-          title: "Toggle hotkey",
-          value: "toggleHotkey",
-          description: settings.toggleHotkey || "disabled",
-        },
-        {
-          title: "Submit hotkey",
-          value: "submitHotkey",
-          description: settings.submitHotkey || "disabled",
-        },
-        {
-          title: "Microphone",
-          value: "mic",
-          description: settings.mic || "system default",
-        },
         {
           title: "Language",
           value: "language",
           description: settings.language,
+        },
+        {
+          title: "Temperature",
+          value: "temperature",
+          description: String(settings.temperature),
+        },
+        {
+          title: "Context-Aware Vocabulary",
+          value: "prompt",
+          description: settings.prompt || "empty",
+        },
+        {
+          title: "⬅ Back",
+          value: "back",
+          description: "Return to settings",
+        }
+      ],
+      onSelect: (option) => {
+        if (option.value === "back") {
+          showSettings(ctx);
+          return;
+        }
+        if (option.value === "language") {
+          setDialog(ctx, "large", () =>
+            ctx.api.ui.DialogSelect({
+              title: "Select Language",
+              options: [
+                { title: "Auto", value: "auto" },
+                { title: "English", value: "en" },
+                { title: "Russian", value: "ru" },
+                { title: "German", value: "de" },
+                { title: "Spanish", value: "es" },
+                { title: "French", value: "fr" },
+                { title: "Custom code", value: "__custom" },
+                { title: "⬅ Back", value: "back" }
+              ],
+              onSelect: (sel) => {
+                if (sel.value === "back") {
+                  showModelTuning(ctx);
+                  return;
+                }
+                if (sel.value === "__custom") {
+                  showPrompt(ctx, {
+                    title: "Language code",
+                    placeholder: "e.g. en, ru",
+                    value: "",
+                    onConfirm: (val) => {
+                      writeSetting(ctx.api.kv, "language", val.trim() || "auto");
+                      showModelTuning(ctx);
+                    }
+                  });
+                  return;
+                }
+                writeSetting(ctx.api.kv, "language", sel.value);
+                showModelTuning(ctx);
+              }
+            })
+          );
+        }
+        if (option.value === "temperature") {
+          showPrompt(ctx, {
+            title: "Temperature (0.0 to 1.0)",
+            placeholder: "0.0 for strict, 0.8 for creative",
+            value: String(settings.temperature),
+            onConfirm: (val) => {
+              const num = Number(val);
+              writeSetting(ctx.api.kv, "temperature", isNaN(num) ? 0.0 : num);
+              showModelTuning(ctx);
+            }
+          });
+        }
+        if (option.value === "prompt") {
+          showPrompt(ctx, {
+            title: "Context-Aware Vocabulary",
+            placeholder: "Comma-separated terms",
+            value: settings.prompt,
+            onConfirm: (val) => {
+              writeSetting(ctx.api.kv, "prompt", val);
+              showModelTuning(ctx);
+            }
+          });
+        }
+      }
+    })
+  );
+}
+
+function showPrompt(ctx, options) {
+  setDialog(ctx, "large", () => ctx.api.ui.DialogPrompt(options));
+}
+
+function showSettings(ctx) {
+  const settings = readSettings(ctx.api.kv);
+  const activeModel = MODELS.find(m => m.id === settings.model);
+
+  setDialog(ctx, "large", () =>
+    ctx.api.ui.DialogSelect({
+      title: "Voice Settings",
+      options: [
+        {
+          title: "API Key",
+          value: "apikey",
+          description: settings.groqApiKey ? "********" : "Not set",
+        },
+        {
+          title: "Model",
+          value: "model",
+          description: activeModel.name,
+        },
+          {
+            title: "Quota limits",
+            value: "quotas",
+            description: "Fetch live quota limits...",
+          },
+          {
+            title: "Model tuning",
+            value: "tuning",
+            description: `Lang: ${settings.language}, Temp: ${settings.temperature}`,
+          },
+          {
+            title: "Hold hotkey",
+            value: "hotkey",
+            description: settings.hotkey ? `hold ${settings.hotkey}` : "disabled",
+          },
+          {
+            title: "Toggle hotkey",
+            value: "toggleHotkey",
+            description: settings.toggleHotkey || "disabled",
+          },
+          {
+            title: "Submit hotkey",
+            value: "submitHotkey",
+            description: settings.submitHotkey || "disabled",
+          },
+          {
+            title: "Cancel hotkey",
+            value: "cancelHotkey",
+            description: settings.cancelHotkey || "disabled",
+          },
+        {
+          title: "Microphone",
+          value: "mic",
+          description: settings.mic || "system default",
         },
         {
           title: "Auto-submit after /voice",
@@ -588,29 +340,46 @@ function showSettings(ctx) {
           description: settings.autoSubmit ? "enabled" : "disabled",
         },
         {
-          title: "Download directory",
-          value: "downloadDir",
-          description: settings.downloadDir || getCacheDir(ctx.options, settings),
-        },
-        {
-          title: "Native engine",
-          value: "engine",
-          description: `${getEngineStatus("whisper.cpp", ctx.options, settings).source} · whisper.cpp`,
-        },
-        {
           title: "Diagnostics",
           value: "diagnostics",
-          description: "Check recorder, whisper-cli, and model paths.",
-        },
-        {
-          title: "Show first-run setup again",
-          value: "firstRun",
-          description: "Open the initial model picker.",
-        },
+          description: "Check recorder status",
+        }
       ],
       onSelect: (option) => {
-        if (option.value === "model") showModelPicker(ctx, false);
-        if (option.value === "download") downloadActiveModel(ctx);
+        if (option.value === "apikey") {
+          showPrompt(ctx, {
+            title: "API Key",
+            placeholder: "gsk_...",
+            value: settings.groqApiKey,
+            onConfirm: (value) => {
+              writeSetting(ctx.api.kv, "groqApiKey", value.trim());
+              showSettings(ctx);
+            },
+            onCancel: () => showSettings(ctx),
+          });
+        }
+        if (option.value === "model") {
+          const modelOpts = MODELS.map(m => ({ title: m.name, value: m.id, description: m.id }));
+          modelOpts.push({ title: "⬅ Back", value: "back", description: "Return to settings" });
+
+          setDialog(ctx, "large", () =>
+            ctx.api.ui.DialogSelect({
+              title: "Select Model",
+              options: modelOpts,
+              onSelect: (sel) => {
+                if (sel.value === "back") {
+                  showSettings(ctx);
+                  return;
+                }
+                writeSetting(ctx.api.kv, "model", sel.value);
+                showSettings(ctx);
+              }
+            })
+          );
+        }
+        if (option.value === "quotas") {
+          checkGroqQuota(ctx, settings.groqApiKey);
+        }
         if (option.value === "hotkey") {
           showPrompt(ctx, {
             title: "Hold hotkey",
@@ -621,6 +390,7 @@ function showSettings(ctx) {
               ctx.registerCommands();
               showSettings(ctx);
             },
+            onCancel: () => showSettings(ctx),
           });
         }
         if (option.value === "toggleHotkey") {
@@ -633,155 +403,207 @@ function showSettings(ctx) {
               ctx.registerCommands();
               showSettings(ctx);
             },
+            onCancel: () => showSettings(ctx),
           });
         }
         if (option.value === "submitHotkey") {
           showPrompt(ctx, {
             title: "Submit hotkey",
-            placeholder: "leader r or empty to disable",
+            placeholder: "empty to disable",
             value: settings.submitHotkey,
             onConfirm: (value) => {
               writeSetting(ctx.api.kv, "submitHotkey", value.trim());
               ctx.registerCommands();
               showSettings(ctx);
-            },
+            }
           });
         }
-        if (option.value === "mic") showMicrophonePicker(ctx);
-        if (option.value === "language") showLanguagePicker(ctx);
+        if (option.value === "cancelHotkey") {
+          showPrompt(ctx, {
+            title: "Cancel hotkey",
+            placeholder: "ctrl+q, empty to disable",
+            value: settings.cancelHotkey,
+            onConfirm: (value) => {
+              writeSetting(ctx.api.kv, "cancelHotkey", value.trim());
+              ctx.registerCommands();
+              showSettings(ctx);
+            }
+          });
+        }
+        if (option.value === "tuning") showModelTuning(ctx);
+        if (option.value === "mic") {
+          showMicPicker(ctx, true);
+        }
         if (option.value === "autoSubmit") {
           writeSetting(ctx.api.kv, "autoSubmit", !settings.autoSubmit);
           showSettings(ctx);
         }
-        if (option.value === "downloadDir") {
-          showPrompt(ctx, {
-            title: "Download directory",
-            placeholder: "~/.cache/opencode-voice",
-            value: settings.downloadDir,
-            onConfirm: (value) => {
-              writeSetting(ctx.api.kv, "downloadDir", value.trim());
-              showSettings(ctx);
-            },
-          });
+        if (option.value === "diagnostics") {
+          showDiagnostics(ctx);
         }
-        if (option.value === "engine") showEngineManager(ctx);
-        if (option.value === "diagnostics") showDiagnostics(ctx);
-        if (option.value === "firstRun") showModelPicker(ctx, true);
       },
     }),
   );
 }
 
-async function appendTranscription(ctx, text, submit) {
-  const next = text.endsWith(" ") ? text : `${text} `;
-  await ctx.api.client.tui.appendPrompt({ text: next });
-  if (submit) await ctx.api.client.tui.submitPrompt();
-}
-
-async function stopAndTranscribe(ctx, submit) {
-  if (ctx.runtime.isTranscribing()) {
-    toast(ctx.api, "Transcription is already running", "warning");
-    return;
-  }
-
-  try {
-    const settings = readSettings(ctx.api.kv);
-    const model = getModel(settings.model);
-    const audioFile = await ctx.runtime.stop();
-    if (!audioFile) return;
-
-    toast(ctx.api, "Transcribing...");
-    const text = await ctx.runtime.transcribe(audioFile, model, settings);
-    await appendTranscription(ctx, text, submit || settings.autoSubmit);
-    toast(ctx.api, submit || settings.autoSubmit ? "Transcribed and submitted" : "Transcribed", "success");
-  } catch (error) {
-    toast(ctx.api, error instanceof Error ? error.message : String(error), "error");
-  }
-}
-
-async function startVoice(ctx, submit = false, hold = false) {
-  if (ctx.runtime.isTranscribing()) {
-    toast(ctx.api, "Transcription is already running", "warning");
-    return;
-  }
-
-  if (ctx.runtime.isRecording()) return;
-
+async function showMicPicker(ctx, returnToSettings = false) {
   const settings = readSettings(ctx.api.kv);
-  const model = getModel(settings.model);
-  if (!isModelDownloaded(model, ctx.options, settings)) {
-    try {
-      await ensureEngineReady(ctx, settings);
-      await ensureDownloaded(ctx, model, settings);
-      ctx.api.ui.dialog.clear();
-    } catch (error) {
-      showError(ctx, "Voice setup failed", error);
-      return;
-    }
-  }
-
+  let mics = [];
   try {
-    await ensureEngineReady(ctx, settings);
-    await ensureRecorderReady(ctx, settings);
+    mics = await listMicrophones(settings);
   } catch (error) {
-    showError(ctx, "Voice runtime setup failed", error);
+    toast(ctx.api, `Microphone error: ${error.message}`, "error");
+    if (returnToSettings) showSettings(ctx);
+    else ctx.api.ui.dialog.clear();
     return;
   }
 
+  const options = [{ title: "System Default", value: "", description: "Let the OS choose" }];
+  for (const mic of mics) {
+    if (mic === "default") continue;
+    options.push({ title: String(mic), value: String(mic), description: `Use ${mic}` });
+  }
+
+  if (returnToSettings) {
+    options.push({ title: "⬅ Back", value: "back", description: "Return to settings" });
+  }
+
+  setDialog(ctx, "large", () =>
+    ctx.api.ui.DialogSelect({
+      title: "Select Microphone",
+      options,
+      onSelect: (option) => {
+        if (option.value === "back") {
+          showSettings(ctx);
+          return;
+        }
+        writeSetting(ctx.api.kv, "mic", option.value);
+        if (returnToSettings) showSettings(ctx);
+        else ctx.api.ui.dialog.clear();
+      }
+    }),
+  );
+}
+
+async function showDiagnostics(ctx) {
+  const settings = readSettings(ctx.api.kv);
+  const recorder = getRecorderStatus(ctx.options, settings);
+  const probe = recorder.resolvedBinary ? await probeRecorder(recorder.resolvedBinary) : null;
+
+  setDialog(ctx, "xlarge", () =>
+    ctx.api.ui.DialogAlert({
+      title: "Diagnostics",
+      message: [
+        "Recorder",
+        `Binary: ${recorder.resolvedBinary || "not found"}`,
+        `Version: ${probe?.ok ? probe.version : probe ? probe.message : "N/A"}`,
+      ].join("\n"),
+      onConfirm: () => showSettings(ctx)
+    }),
+  );
+}
+
+async function startVoice(ctx, fromSlashCommand, submit = false) {
+  const settings = readSettings(ctx.api.kv);
+  if (!settings.groqApiKey) {
+    toast(ctx.api, "Please configure API Key first", "warning");
+    showSettings(ctx);
+    return;
+  }
+  
+  if (ctx.runtime.isTranscribing()) {
+    toast(ctx.api, "Already transcribing", "warning");
+    return;
+  }
+  if (ctx.runtime.isRecording()) {
+    toast(ctx.api, "Already recording", "warning");
+    return;
+  }
+
+  const activeModel = MODELS.find(m => m.id === settings.model) || MODELS[1];
+  const rpmRem = getLocalRPM(ctx.api.kv, activeModel.id);
+  if (rpmRem <= 0) {
+    toast(ctx.api, "RPM limit reached for this model. Wait a few seconds.", "error");
+    return;
+  }
+
+  ctx.runtime.pendingSubmit = submit;
+  ctx.runtime.isCancelled = false;
+  toast(ctx.api, "Recording started...", "info");
+
   try {
-    ctx.runtime.pendingSubmit = submit || settings.autoSubmit;
     await ctx.runtime.start(settings);
-    toast(ctx.api, hold ? `Recording. Release ${settings.hotkey || "the hotkey"} to stop.` : submit ? "Recording for submit. Run /voice-submit again to stop." : "Recording. Run /voice again to stop.");
   } catch (error) {
-    toast(ctx.api, error instanceof Error ? error.message : String(error), "error");
+    toast(ctx.api, String(error), "error");
   }
 }
 
-async function finishVoice(ctx, submit = false) {
-  if (!ctx.runtime.isRecording()) return;
-  await stopAndTranscribe(ctx, submit || ctx.runtime.pendingSubmit);
-  ctx.runtime.pendingSubmit = false;
+async function finishVoice(ctx, fromSlashCommand) {
+  const settings = readSettings(ctx.api.kv);
+  const activeModel = MODELS.find(m => m.id === settings.model);
+  const file = await ctx.runtime.stop().catch((error) => {
+    toast(ctx.api, String(error), "error");
+    return null;
+  });
+
+  if (!file) {
+    return;
+  }
+
+  toast(ctx.api, `Transcribing (${activeModel.id})...`, "info");
+  
+    try {
+      recordRequest(ctx.api.kv, activeModel.id);
+      
+      settings.onRetry = (msg) => toast(ctx.api, `Network issue, retrying...`, "warning");
+
+      const text = await ctx.runtime.transcribe(file, activeModel, settings);
+    if (!text) {
+      toast(ctx.api, "No speech detected", "warning");
+    } else {
+      const next = text.endsWith(" ") ? text : `${text} `;
+      await ctx.api.client.tui.appendPrompt({ text: next });
+      if (ctx.runtime.pendingSubmit || (fromSlashCommand && settings.autoSubmit)) {
+        await ctx.api.client.tui.submitPrompt();
+      }
+    }
+    } catch (error) {
+      if (!ctx.runtime.isCancelled && !error.message.includes("cancelled")) {
+        toast(ctx.api, String(error), "error");
+      }
+    } finally {
+      ctx.runtime.pendingSubmit = false;
+      ctx.runtime.isCancelled = false;
+    }
+}
+
+async function stopVoice(ctx) {
+  if (!ctx.runtime.isRecording() && !ctx.runtime.isTranscribing()) return;
+  await ctx.runtime.cancel();
+  toast(ctx.api, "Voice cancelled", "info");
 }
 
 async function toggleVoice(ctx, submit = false) {
-  if (ctx.runtime.isTranscribing()) {
-    toast(ctx.api, "Transcription is already running", "warning");
-    return;
-  }
-
-  if (ctx.runtime.isRecording()) {
-    await finishVoice(ctx, submit);
-    return;
-  }
-
-  await startVoice(ctx, submit, false);
-}
-
-function stopVoice(ctx) {
-  ctx.runtime.cancel();
-  toast(ctx.api, "Voice recording cancelled");
+  if (ctx.runtime.isTranscribing()) return;
+  if (ctx.runtime.isRecording()) await finishVoice(ctx, true);
+  else await startVoice(ctx, true, submit);
 }
 
 function buildBindings(settings) {
   const bindings = [];
-  const holdHotkey = settings.hotkey.toLowerCase();
-  const toggleHotkey = settings.toggleHotkey.toLowerCase();
-
   if (settings.hotkey) {
-    bindings.push(
-      { key: settings.hotkey, event: "press", preventDefault: true, cmd: "voice.hold.start", desc: "Hold to record voice" },
-      { key: settings.hotkey, event: "release", preventDefault: true, cmd: "voice.hold.finish", desc: "Release to transcribe voice" },
-    );
+    bindings.push({ key: settings.hotkey, event: "press", preventDefault: true, cmd: "voice.hold.start", desc: "Start recording (hold)" });
+    bindings.push({ key: settings.hotkey, event: "release", preventDefault: true, cmd: "voice.hold.finish", desc: "Finish recording (release)" });
   }
-
-  if (settings.toggleHotkey && toggleHotkey !== holdHotkey) {
-    bindings.push({ key: settings.toggleHotkey, event: "press", preventDefault: true, cmd: "voice.record", desc: "Toggle voice recording" });
+  if (settings.toggleHotkey) {
+    bindings.push({ key: settings.toggleHotkey, event: "press", preventDefault: true, cmd: "voice.record", desc: "Voice toggle recording" });
   }
-
   if (settings.submitHotkey) {
     bindings.push({ key: settings.submitHotkey, event: "press", preventDefault: true, cmd: "voice.submit", desc: "Voice input and submit" });
   }
-
+  if (settings.cancelHotkey) {
+    bindings.push({ key: settings.cancelHotkey, event: "press", preventDefault: true, cmd: "voice.stop", desc: "Cancel voice recording" });
+  }
   return bindings;
 }
 
@@ -836,7 +658,7 @@ function buildCommands(ctx) {
     {
       name: "voice.settings",
       title: "Voice: settings",
-      desc: "Open local voice input settings.",
+      desc: "Open voice input settings.",
       category: "Voice",
       namespace: "palette",
       slashName: "voice-settings",
@@ -845,9 +667,24 @@ function buildCommands(ctx) {
   ];
 }
 
+async function checkUpdate(api) {
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    const res = await fetch(`https://registry.npmjs.org/${pkg.name}/latest`);
+    const data = await res.json();
+    if (data.version && data.version !== pkg.version) {
+      toast(api, `Updating ${pkg.name} to ${data.version}...`, "info");
+      const proc = spawn("opencode", ["plugin", pkg.name], { detached: true, stdio: "ignore" });
+      proc.unref();
+    }
+  } catch (e) {}
+}
+
 const plugin = {
   id: PLUGIN_ID,
   tui: async (api, options = {}) => {
+    setTimeout(() => checkUpdate(api), 3000);
     const runtime = new VoiceRuntime(options || {});
     const ctx = {
       api,
@@ -865,7 +702,6 @@ const plugin = {
       },
     };
 
-    migrateSettings(api.kv);
     ctx.registerCommands();
     api.lifecycle.onDispose(() => {
       if (ctx.disposeCommands) ctx.disposeCommands();
@@ -873,7 +709,19 @@ const plugin = {
     });
 
     setTimeout(() => {
-      if (shouldShowStartupModelPicker(ctx)) showModelPicker(ctx, true);
+      const settings = readSettings(api.kv);
+      if (!settings.groqApiKey) {
+        showPrompt(ctx, {
+          title: "Enter Groq API key to use Voice input",
+          placeholder: "gsk_...",
+          value: "",
+          onConfirm: (value) => {
+            writeSetting(api.kv, "groqApiKey", value.trim());
+            toast(api, "API Key saved. Press Ctrl+R to start recording!", "info");
+            ctx.api.ui.dialog.clear();
+          },
+        });
+      }
     }, 250);
   },
 };
