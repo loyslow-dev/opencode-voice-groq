@@ -1,6 +1,6 @@
 {
     "name": "@loyslow/opencode-voice-groq",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "bin": {
         "opencode-voice-groq": "bin/cli.js"
     },
@@ -8,14 +8,14 @@
     "type": "module",
     "license": "MIT",
     "readmeFilename": "README.md",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/ihxnnxs/opencode-voice.git"
-    },
-    "bugs": {
-        "url": "https://github.com/ihxnnxs/opencode-voice/issues"
-    },
-    "homepage": "https://github.com/ihxnnxs/opencode-voice#readme",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "git+https://github.com/loyslow-dev/opencode-voice-groq.git"
+                   },
+    "bugs":  {
+                 "url":  "https://github.com/loyslow-dev/opencode-voice-groq/issues"
+             },
+    "homepage":  "https://github.com/loyslow-dev/opencode-voice-groq#readme",
     "main": "./index.js",
     "exports": {
         ".": {
