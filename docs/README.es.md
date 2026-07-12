@@ -1,35 +1,40 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../assets/opencode-voice-dark.svg">
-    <img alt="opencode voice groq" src="../assets/opencode-voice-light.svg">
-  </picture>
+  <a href="https://github.com/loyslow-dev/opencode-voice-groq">
+    <picture>
+      <source srcset="../assets/opencode-voice-dark.svg" media="(prefers-color-scheme: dark)">
+      <source srcset="../assets/opencode-voice-light.svg" media="(prefers-color-scheme: light)">
+      <img src="../assets/opencode-voice-light.svg" alt="opencode voice groq logo">
+    </picture>
+  </a>
+</p>
+<p align="center">Cloud-based, ultra-fast speech-to-text for the OpenCode TUI.</p>
+<p align="center">
+  <img alt="status" src="https://img.shields.io/badge/status-mvp-orange?style=flat-square" />
+  <a href="https://www.npmjs.com/package/@loyslow/opencode-voice-groq"><img alt="npm version" src="https://img.shields.io/npm/v/@loyslow/opencode-voice-groq?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/@loyslow/opencode-voice-groq"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@loyslow/opencode-voice-groq?style=flat-square" /></a>
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" />
+  <img alt="opencode" src="https://img.shields.io/badge/opencode-%3E%3D1.17.4-black?style=flat-square" />
+  <img alt="stt" src="https://img.shields.io/badge/STT-cloud_groq_api-purple?style=flat-square" />
 </p>
 
-[English](../README.md) | [Русский](README.ru.md) | [简体中文](README.zh.md) | [Español](README.es.md)
+<p align="center">
+  <a href="../README.md">English</a> |
+  <a href="README.ru.md">Русский</a> |
+  <a href="README.zh.md">简体中文</a> |
+  <a href="README.es.md">Español</a>
+</p>
 
-# opencode-voice-groq
+---
 
-Plugin de entrada de voz ultrarrápido y basado en la nube para [OpenCode](https://github.com/opencode-ai/opencode) que utiliza la API Whisper de Groq (`whisper-large-v3` y `whisper-large-v3-turbo`).
+### Instalación
 
-Este es un fork altamente optimizado de `opencode-voice`. En lugar de descargar modelos pesados y procesar audio localmente, este complemento usa los **LPU de Groq**. El audio se graba, se comprime agresivamente a `.m4a` sobre la marcha, se le elimina el silencio y se transcribe en milisegundos.
-
-## Características
-
-- **Transcripción ultrarrápida**: Impulsada por la API de Groq.
-- **Compresión de audio avanzada**: Graba directamente a `.m4a` para eliminar la latencia de red.
-- **Eliminación de silencios**: Recorta automáticamente el silencio al inicio y al final de tu voz.
-- **Protección de cuota Fail-Fast**: Rastrea tu límite de solicitudes (RPM). Si superas el límite gratuito, te detiene *antes* de grabar.
-- **Auto-Retry**: Maneja cortes momentáneos de internet reintentando automáticamente la transcripción.
-- **Ajuste del modelo (Model Tuning)**: Configura temperatura, idioma y vocabulario contextual (ej. `TypeScript, React`) en la interfaz.
-- **Tecla de cancelación**: Cancela la grabación al instante sin enviar datos a Groq.
-
-## Instalación
-
-Un comando en OpenCode:
+Un comando a través de OpenCode:
 
 ```bash
 opencode plugin @loyslow/opencode-voice-groq
 ```
+
+Reinicia OpenCode después de instalar. El primer inicio te pedirá una clave API de Groq para usar su motor de inferencia LPU. El plugin usa `ffmpeg` de manera automática.
 
 Instalador CLI opcional:
 
@@ -37,16 +42,11 @@ Instalador CLI opcional:
 npx @loyslow/opencode-voice-groq install
 ```
 
-## Configuración
+### Créditos
 
-En el primer inicio, aparecerá un menú de configuración.
-1. Consigue tu clave de API gratis en [Groq Console](https://console.groq.com/keys).
-2. Ingresa la clave API.
-3. Configura tus teclas, el modelo y el vocabulario a través del menú interactivo.
+- El logotipo de OpenCode SVG fue adaptado del [repositorio público de OpenCode](https://github.com/anomalyco/opencode). La marca `voice` se añadió para este plugin.
+- Este es un fork altamente optimizado del proyecto original [opencode-voice](https://github.com/ihxnnxs/opencode-voice) creado por `@ihxnnxs`.
 
-Usa `/voice-settings` para acceder al menú de Model Tuning o configurar el micrófono.
+---
 
-## Créditos
-
-Un agradecimiento masivo al autor original:
-- Repositorio Original: [ihxnnxs/opencode-voice](https://github.com/ihxnnxs/opencode-voice)
+**OpenCode** [Website](https://opencode.ai) | [Docs](https://opencode.ai/docs) | [Discord](https://opencode.ai/discord)
